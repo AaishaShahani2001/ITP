@@ -158,18 +158,104 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// PUT /api/vet/:id → Update appointment by ID (simple)
-router.put("/:id", async (req, res, next) => {
+// PUT /api/vet/:id → Update appointment by ID (multipart-friendly + conflict check + optional file replace)
+router.put("/:id", upload.single("medicalFile"), async (req, res, next) => {
   try {
-    const updated = await VetAppointment.findByIdAndUpdate(
-      req.params.id,
-      req.body,                          // send only fields you want to change
-      { new: true, runValidators: true } // return updated doc + validate
-    ).lean();
+    const id = req.params.id;
 
-    if (!updated) return res.status(404).json({ error: "Appointment not found" });
-    res.json({ ok: true, data: updated });
+    // Load existing doc (we need current values + existing file path)
+    const existing = await VetAppointment.findById(id);
+    if (!existing) return res.status(404).json({ error: "Appointment not found" });
+
+    // Pull incoming fields from multipart body (they'll be strings)
+    const {
+      ownerName,
+      ownerPhone,
+      ownerEmail,
+      petType,
+      petSize,
+      reason,
+      dateISO,
+      timeSlotMinutes,
+      notes,
+      selectedService,
+      selectedPrice,
+      status, // optional if you want to allow status changes here
+    } = req.body;
+
+    // Build the update object only with provided fields (partial update)
+    const update = {};
+
+    if (typeof ownerName === "string") update.ownerName = ownerName.trim();
+    if (typeof ownerPhone === "string") update.ownerPhone = ownerPhone.trim();
+    if (typeof ownerEmail === "string") update.ownerEmail = ownerEmail.trim();
+    if (typeof petType === "string") update.petType = petType;
+    if (typeof petSize === "string") update.petSize = petSize;
+
+    // Reason is locked on the UI, but we still accept it if sent (unchanged). If you want to hard-lock on server, comment next line.
+    if (typeof reason === "string") update.reason = reason.trim();
+
+    if (typeof dateISO === "string") update.dateISO = dateISO;
+    if (typeof timeSlotMinutes !== "undefined" && timeSlotMinutes !== "") {
+      update.timeSlotMinutes = Number(timeSlotMinutes);
+    }
+    if (typeof notes === "string") update.notes = notes;
+
+    if (typeof selectedService === "string") update.selectedService = selectedService;
+    if (typeof selectedPrice === "string" || typeof selectedPrice === "number") update.selectedPrice = selectedPrice;
+
+    if (typeof status === "string") update.status = status; // only if you intend to allow this here
+
+    // If date/time changed, conflict check against other docs
+    const wantDate = update.dateISO ?? existing.dateISO;
+    const wantSlot = typeof update.timeSlotMinutes === "number" ? update.timeSlotMinutes : existing.timeSlotMinutes;
+
+    if (wantDate && typeof wantSlot === "number") {
+      const conflict = await VetAppointment.findOne({
+        _id: { $ne: id },
+        dateISO: wantDate,
+        timeSlotMinutes: wantSlot,
+      }).lean();
+
+      if (conflict) {
+        const err = new Error("That time slot is already booked.");
+        err.status = 409;
+        throw err;
+      }
+    }
+
+    // Handle optional file replace
+    // If a new file is uploaded, save its path and remove the old file on disk.
+    if (req.file) {
+      const newPath = `/uploads/medical/${req.file.filename}`;
+      update.medicalFilePath = newPath;
+
+      // delete old file if existed and is inside /uploads/medical
+      const oldRel = existing.medicalFilePath; // e.g., "/uploads/medical/abc.pdf"
+      if (oldRel && oldRel.startsWith("/uploads/medical/")) {
+        try {
+          const oldAbs = path.join(process.cwd(), oldRel.replace(/^\//, ""));
+          if (fs.existsSync(oldAbs)) fs.unlinkSync(oldAbs);
+        } catch (e) {
+          // don't fail the whole request for file delete problems; just log
+          console.warn("⚠️ Could not delete old medical file:", e.message);
+        }
+      }
+    }
+
+    // Now persist changes
+    const updated = await VetAppointment.findByIdAndUpdate(id, update, {
+      new: true,
+      runValidators: true,
+    }).lean();
+
+    return res.json({ ok: true, data: updated });
   } catch (err) {
+    // De-duplicate index overlap (if any unique index present)
+    if (err?.code === 11000) {
+      err.status = 409;
+      err.message = "This time slot is already booked. Please choose another.";
+    }
     next(err);
   }
 });
@@ -185,8 +271,6 @@ router.delete("/:id", async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 });
-
-
 
 // PATCH /api/vet/:id/status  {status: "accepted"|"rejected"|"cancelled"}
 router.patch("/:id/status", async (req, res, next) => {

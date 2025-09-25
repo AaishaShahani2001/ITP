@@ -2,8 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useSnackbar } from "notistack";
+import ConfirmBox from "../components/ConfirmBox";
 
 const API_BASE = "http://localhost:3000/api";
+
+function broadcastAppointmentsChanged(detail = {}) {
+  window.dispatchEvent(new CustomEvent("appointments:changed", { detail }));
+}
 
 export default function CaretakerDashboard() {
   const [rows, setRows] = useState([]);
@@ -12,6 +17,25 @@ export default function CaretakerDashboard() {
   const [statusFilter, setStatusFilter] = useState("all");      // all | pending | accepted | rejected | cancelled
   const [q, setQ] = useState("");                               // quick text search (owner/pet/packages)
   const { enqueueSnackbar } = useSnackbar();
+
+  // Confirm dialog state
+const [confirmOpen, setConfirmOpen] = useState(false);
+const [pendingRow, setPendingRow] = useState(null);
+const [pendingNext, setPendingNext] = useState(null); // "accepted" | "rejected"
+const [confirmBusy, setConfirmBusy] = useState(false);
+
+// Open/close helpers
+function openConfirm(row, nextStatus) {
+  setPendingRow(row);
+  setPendingNext(nextStatus);
+  setConfirmOpen(true);
+}
+function closeConfirm() {
+  setConfirmOpen(false);
+  setPendingRow(null);
+  setPendingNext(null);
+  setConfirmBusy(false);
+}
 
   // helper to coalesce fee fields to a number
   const toAmount = (obj) => {
@@ -105,37 +129,47 @@ export default function CaretakerDashboard() {
   }, [rows, serviceFilter, statusFilter, q]);
 
   async function updateStatus(row, nextStatus) {
-    try {
-      const endpoint =
-        row.service === "grooming"
-          ? `${API_BASE}/grooming/${row._id}/status`
-          : `${API_BASE}/daycare/${row._id}/status`;
+  try {
+    const endpoint =
+      row.service === "grooming"
+        ? `${API_BASE}/grooming/${row._id}/status`
+        : `${API_BASE}/daycare/${row._id}/status`;
 
-      const res = await fetch(endpoint, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      const data = await res.json();
+    const res = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    const data = await res.json();
 
-      if (!res.ok) {
-        enqueueSnackbar(data?.message || "Failed to update status", { variant: "error" });
-        return;
-      }
-
-      setRows((prev) =>
-        prev.map((r) =>
-          r._id === row._id && r.service === row.service
-            ? { ...r, status: nextStatus }
-            : r
-        )
-      );
-      enqueueSnackbar(`Marked as ${nextStatus}`, { variant: "success" });
-    } catch (e) {
-      console.error(e);
-      enqueueSnackbar("Network error", { variant: "error" });
+    if (!res.ok) {
+      enqueueSnackbar(data?.message || "Failed to update status", { variant: "error" });
+      return false;
     }
+
+    setRows((prev) =>
+      prev.map((r) =>
+        r._id === row._id && r.service === row.service ? { ...r, status: nextStatus } : r
+      )
+    );
+    enqueueSnackbar(`Marked as ${nextStatus}`, { variant: "success" });
+
+    //notify calendar/other dashboards to refetch
+    broadcastAppointmentsChanged({
+      action: "status-changed",
+      service: row.service,
+      id: row._id,
+      status: nextStatus,
+    });
+
+    return true;
+  } catch (e) {
+    console.error(e);
+    enqueueSnackbar("Network error", { variant: "error" });
+    return false;
   }
+}
+
 
   // --------- PDF export (with REVENUE totals) ----------
   function exportCaretakerPDF() {
@@ -342,22 +376,23 @@ export default function CaretakerDashboard() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <div className="inline-flex gap-2">
-                    <button
-                      onClick={() => updateStatus(r, "accepted")}
-                      disabled={r.status === "accepted"}
-                      className="px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                    >
-                      Accept
-                    </button>
-                    <button
-                      onClick={() => updateStatus(r, "rejected")}
-                      disabled={r.status === "rejected"}
-                      className="px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
-                    >
-                      Reject
-                    </button>
-                  </div>
+            <div className="inline-flex gap-2">
+              <button
+                  onClick={() => openConfirm(r, "accepted")}
+                  disabled={r.status === "accepted"}
+                  className="px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                Accept
+              </button>
+
+              <button
+                  onClick={() => openConfirm(r, "rejected")}
+                  disabled={r.status === "rejected"}
+                  className="px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
                 </td>
               </tr>
             ))}
@@ -377,6 +412,35 @@ export default function CaretakerDashboard() {
           </button>
         </div>
       </div>
+
+      <ConfirmBox
+        open={confirmOpen}
+        title={
+        pendingNext === "accepted" ? "Accept this booking?" :
+        pendingNext === "rejected" ? "Reject this booking?" :
+        "Confirm action"
+        }
+        message={
+          pendingRow
+          ? `${pendingRow.ownerName} • ${pendingRow.service.toUpperCase()} • ${pendingRow.date} ${pendingRow.time || ""}`
+          : "Are you sure?"
+        }
+          confirmLabel={pendingNext === "rejected" ? "Reject" : "Accept"}
+          cancelLabel="Keep"
+          tone={pendingNext === "rejected" ? "danger" : "success"}
+          loading={confirmBusy}
+          onConfirm={async () => {
+          if (!pendingRow || !pendingNext) return;
+          setConfirmBusy(true);
+          const ok = await updateStatus(pendingRow, pendingNext);
+          setConfirmBusy(false);
+          if (ok) closeConfirm();
+        }}
+        onClose={() => {
+        if (!confirmBusy) closeConfirm();
+      }}
+    />
+
     </section>
   );
 }

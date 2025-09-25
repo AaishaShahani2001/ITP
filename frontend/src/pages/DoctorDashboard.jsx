@@ -3,8 +3,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useSnackbar } from "notistack";
+import ConfirmBox from "../components/ConfirmBox";
 
 const API_BASE = "http://localhost:3000";
+
+function broadcastAppointmentsChanged(detail = {}) {
+  window.dispatchEvent(new CustomEvent("appointments:changed", { detail }));
+}
 
 const VIEW_FILTERS = [
   { value: "all", label: "All appointments" },
@@ -41,6 +46,24 @@ export default function DoctorDashboard() {
   const [err, setErr] = useState("");
   const [query, setQuery] = useState(""); // search by package name
   const { enqueueSnackbar } = useSnackbar();
+
+  /* --------------- confirm dialog state ---------------- */
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingRow, setPendingRow] = useState(null);          // the appointment object
+  const [pendingNext, setPendingNext] = useState(null);        // "accepted" | "rejected"
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  function openConfirm(row, nextStatus) {
+    setPendingRow(row);
+    setPendingNext(nextStatus);
+    setConfirmOpen(true);
+  }
+  function closeConfirm() {
+    setConfirmOpen(false);
+    setPendingRow(null);
+    setPendingNext(null);
+    setConfirmBusy(false);
+  }
 
   // Load appointments (includes medicalFilePath if uploaded)
   useEffect(() => {
@@ -104,7 +127,6 @@ export default function DoctorDashboard() {
 
   // Accept/Reject actions
   async function updateStatus(id, status) {
-    if (!confirm(`Mark this appointment as "${status}"?`)) return;
     try {
       const res = await fetch(`${API_BASE}/api/vet/${id}/status`, {
         method: "PATCH",
@@ -114,9 +136,16 @@ export default function DoctorDashboard() {
       const ct = res.headers.get("content-type") || "";
       const data = ct.includes("application/json") ? await res.json() : await res.text();
       if (!res.ok) throw new Error(typeof data === "string" ? data : data?.error || "Failed");
+
       setItems((prev) => prev.map((it) => (it._id === id ? { ...it, status } : it)));
+      enqueueSnackbar(`Marked as ${status}`, { variant: "success" });
+
+      // notify calendars/other dashboards to refetch
+      broadcastAppointmentsChanged({ action: "status-changed", service: "vet", id, status });
+      return true;
     } catch (e) {
       enqueueSnackbar("Failed to update: " + String(e.message || e), { variant: "error" });
+      return false;
     }
   }
 
@@ -312,7 +341,7 @@ export default function DoctorDashboard() {
               {a.reason}
             </p>
 
-            {/* ✅ Medical record (details + View button ONLY; no inline preview) */}
+            {/* Medical record (details + View button) */}
             {a.medicalFilePath && (
               <div className="mt-3 rounded-lg bg-slate-50 ring-1 ring-slate-200 p-3">
                 <div className="flex items-center justify-between gap-3">
@@ -323,7 +352,7 @@ export default function DoctorDashboard() {
 
                   {/* Opens the uploaded file in a new browser tab (served by /uploads static) */}
                   <a
-                    href={`${API_BASE}${a.medicalFilePath}`} // e.g. http://localhost:3000/uploads/medical/...
+                    href={`${API_BASE}${a.medicalFilePath}`} // http://localhost:3000/uploads/medical/...
                     target="_blank"
                     rel="noopener noreferrer"
                     className="rounded-md bg-slate-800 text-white text-xs font-semibold px-3 py-2 hover:bg-black"
@@ -332,7 +361,7 @@ export default function DoctorDashboard() {
                     View
                   </a>
                 </div>
-                {/* If you ever want a Download button too, you can add:
+                {/* Download button:
                 <a href={`${API_BASE}${a.medicalFilePath}`} download className="...">Download</a>
                 */}
               </div>
@@ -341,14 +370,14 @@ export default function DoctorDashboard() {
             {/* Actions */}
             <div className="mt-4 flex items-center gap-2">
               <button
-                onClick={() => updateStatus(a._id, "accepted")}
+                onClick={() => openConfirm(a, "accepted")}
                 disabled={a.status === "accepted"}
                 className="flex-1 rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-semibold hover:bg-blue-700 disabled:opacity-60"
               >
                 Accept
               </button>
               <button
-                onClick={() => updateStatus(a._id, "rejected")}
+                onClick={() => openConfirm(a, "rejected")} 
                 disabled={a.status === "rejected"}
                 className="flex-1 rounded-lg bg-rose-600 text-white px-3 py-2 text-sm font-semibold hover:bg-rose-700 disabled:opacity-60"
               >
@@ -358,6 +387,33 @@ export default function DoctorDashboard() {
           </article>
         ))}
       </div>
+      {/* ---------------- ConfirmBox Modal ---------------- */}
+      <ConfirmBox
+        open={confirmOpen}
+        title={
+          pendingNext === "accepted" ? "Accept this appointment?" :
+          pendingNext === "rejected" ? "Reject this appointment?" :
+          "Confirm action"
+        }
+        message={
+          pendingRow
+            ? `${pendingRow.ownerName || "Owner"} • ${pendingRow.dateISO || "-"} ${minutesToLabel(pendingRow.timeSlotMinutes || 0)}`
+            : "Are you sure?"
+        }
+        confirmLabel={pendingNext === "rejected" ? "Reject" : "Accept"}
+        cancelLabel="Keep"
+        tone={pendingNext === "rejected" ? "danger" : "success"}
+        loading={confirmBusy}
+        onClose={() => { if (!confirmBusy) closeConfirm(); }}
+        onConfirm={async () => {
+          if (!pendingRow || !pendingNext) return;
+          setConfirmBusy(true);
+          const ok = await updateStatus(pendingRow._id, pendingNext);
+          setConfirmBusy(false);
+          if (ok) closeConfirm();
+        }}
+      />
+
     </section>
   );
 }

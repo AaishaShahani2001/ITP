@@ -1,7 +1,8 @@
-// src/pages/MyAppointmentPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../store/cartStore";
+import { useSnackbar } from "notistack"; 
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const API_BASE = "http://localhost:3000/api";
 
@@ -12,12 +13,16 @@ const SERVICE_LABEL = {
 };
 
 const EDIT_PATH = {
-  vet: "/vet-booking",
+  vet: "/vet-edit",             // ← Vet edit page route in App.jsx
   grooming: "/grooming-booking",
   daycare: "/daycarebooking",
 };
 
-/* ---------------- Price mapping (quick frontend catalog) ------------------ */
+function broadcastAppointmentsChanged(detail = {}) {
+  window.dispatchEvent(new CustomEvent("appointments:changed", { detail }));
+}
+
+/* ---------------- Price mapping ------------------ */
 const PRICE_TABLE = {
   grooming: {
     "basic-bath-brush": 2500,
@@ -25,16 +30,16 @@ const PRICE_TABLE = {
     "nail-trim": 1500,
     "de-shedding-treatment": 4500,
     "flea & tick-treatment": 5500,
-    "premium-spa-package": 9500
+    "premium-spa-package": 9500,
   },
   daycare: {
     "half-day": 3000,
     "full-day": 5500,
-    "extended-day": 7000
+    "extended-day": 7000,
   },
   vet: {
     "general-health-checkup": 7500,
-    "vaccination": 4500,
+    vaccination: 4500,
     "emergency-care": 15000,
   },
 };
@@ -49,16 +54,6 @@ function keyify(s) {
 
 // getting price details for each appointment
 function getPrice(a) {
-  // 1) trust any numeric value already provided by backend
-  const numeric =
-    a?.price ??
-    a?.selectedPrice ??
-    a?.packagePrice ??
-    a?.amount ??
-    a?.fee;
-  if (Number.isFinite(Number(numeric))) return Number(numeric);
-
-  // 2) fallback to our table using service + package/title
   const service = String(a?.service || "").toLowerCase();
   const pkgKey =
     keyify(a?.packageId) ||
@@ -73,15 +68,38 @@ function getPrice(a) {
 
 export default function MyAppointmentPage() {
   const navigate = useNavigate();
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [params] = useSearchParams();
   const [email, setEmail] = useState(() => params.get("email") || "");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // confirm dialog state
+const [confirmOpen, setConfirmOpen] = useState(false);
+const [pendingAppt, setPendingAppt] = useState(null);
+const [deletingId, setDeletingId] = useState(null);
+
   // cart bits
   const { addItem, addMany } = useCart();
-  const [selected, setSelected] = useState(null);       // mini summary modal
-  const [showAddMore, setShowAddMore] = useState(false);// add-more modal
+  const [selected, setSelected] = useState(null); // mini summary modal
+  const [showAddMore, setShowAddMore] = useState(false); // add-more modal
+
+  const pendingTimersRef = useRef(new Map()); // id -> { timer, prevItems, snackbarKey }
+
+
+ // normalize id in one place
+  const getApptId = (a) => a?._id || a?.id;
+
+// open/close dialog
+function openConfirm(appt) {
+  setPendingAppt(appt);
+  setConfirmOpen(true);
+}
+function closeConfirm() {
+  setConfirmOpen(false);
+  setPendingAppt(null);
+  setDeletingId(null);
+}
 
   // --- API: fetch my appointments by email ---
   async function fetchMyAppointments(emailArg) {
@@ -124,33 +142,72 @@ export default function MyAppointmentPage() {
   // auto-load if ?email= is present
   useEffect(() => {
     if (email) loadMine();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- Actions ---
-  async function cancel(appt) {
-    if (!window.confirm("Cancel this appointment?")) return;
-    try {
-      const r = await fetch(`${API_BASE}/${appt.service}/${appt.id}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "cancelled" }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        alert(data?.message || "Cancel failed");
-        return;
-      }
-      alert("Appointment cancelled.");
-      loadMine();
-    } catch (e) {
-      console.error(e);
-      alert("Cancel failed.");
-    }
+  // --- Actions (EDIT & DELETE) ---
+
+  async function confirmDelete() {
+  if (!pendingAppt) return;
+  const id = getApptId(pendingAppt);
+  if (!id) {
+    enqueueSnackbar("Missing appointment id.", { variant: "warning" });
+    closeConfirm();
+    return;
   }
 
+  // show 'Deleting…' on the confirm button
+  setDeletingId(id);
+
+  // Optimistic remove
+  const prevItems = items;
+  setItems((cur) => cur.filter((x) => getApptId(x) !== id));
+
+  try {
+    const res = await fetch(`${API_BASE}/${pendingAppt.service}/${id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      // revert on failure
+      setItems(prevItems);
+      enqueueSnackbar(data?.message || data?.error || "Delete failed", { variant: "error" });
+      return;
+    }
+
+    enqueueSnackbar("Appointment deleted.", { variant: "success" });
+
+    // notify calendar & dashboards
+    broadcastAppointmentsChanged({ action: "deleted", service: pendingAppt.service, id });
+  } catch (e) {
+    // revert on network error
+    setItems(prevItems);
+    enqueueSnackbar("Network error while deleting.", { variant: "error" });
+  } finally {
+    closeConfirm();
+  }
+}
+
+
   function edit(appt) {
-    navigate(`${EDIT_PATH[appt.service]}?editId=${appt.id}`);
+    const apptId = appt?.id || appt?._id;
+    if (!apptId) {
+      alert("Missing appointment id.");
+      return;
+    }
+
+    if (!EDIT_PATH[appt.service]) {
+      alert("Unknown service type.");
+      return;
+    }
+
+    // For vet: pass both a query param (editId) AND the doc via location.state
+    // so the edit page can render instantly without re-fetch, but still has id.
+    if (appt.service === "vet") {
+      navigate(`${EDIT_PATH.vet}?editId=${apptId}`, { state: { appointment: appt } });
+      return;
+    }
+
+    // (optional) keep existing paths for other services
+    navigate(`${EDIT_PATH[appt.service]}?editId=${apptId}`);
   }
 
   // Pay Online — open mini summary first
@@ -161,7 +218,7 @@ export default function MyAppointmentPage() {
 
   function proceedToCheckoutFromSummary() {
     if (!selected) return;
-    // ✅ use getPrice(selected) so it matches the list
+    // use getPrice(selected) so it matches the list
     addItem({
       id: selected._id || selected.id,
       service: selected.service,
@@ -174,11 +231,11 @@ export default function MyAppointmentPage() {
 
   function addMoreAndGo(ids) {
     const extra = items
-      .filter((a) => ids.includes(a.id))
+      .filter((a) => ids.includes(a.id || a._id))
       .map((a) => ({
         id: a._id || a.id,
         title: a.title,
-        price: getPrice(a), // ✅ use resolver
+        price: getPrice(a), // use resolver
         extras: a.extras || [],
       }));
     addMany(extra);
@@ -224,7 +281,7 @@ export default function MyAppointmentPage() {
         <ul className="space-y-4">
           {items.map((a) => (
             <li
-              key={`${a.service}-${a.id}`}
+              key={`${a.service}-${a._id || a.id}`}
               className="bg-white rounded-xl p-4 ring-1 ring-black/5 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
             >
               <div>
@@ -239,7 +296,7 @@ export default function MyAppointmentPage() {
                   {a.date} • {a.start}–{a.end}
                 </div>
 
-                {/* ✅ Price line (uses resolver) */}
+                {/*Price line (uses resolver) */}
                 <div className="mt-1 font-semibold">
                   Price: Rs. {getPrice(a).toFixed(2)}
                 </div>
@@ -264,14 +321,13 @@ export default function MyAppointmentPage() {
                   Edit
                 </button>
                 <button
-                  onClick={() => cancel(a)}
-                  disabled={
-                    a.status === "cancelled" || a.status === "rejected" || loading
-                  }
+                  onClick={() => openConfirm(a)}
+                  disabled={a.status === "cancelled" || a.status === "rejected" || loading}
                   className="rounded-lg bg-red-600 text-white px-3 py-2 text-sm font-semibold disabled:opacity-50 hover:bg-red-700"
                 >
                   Cancel
                 </button>
+
                 <button
                   onClick={() => pay(a)}
                   disabled={
@@ -304,7 +360,7 @@ export default function MyAppointmentPage() {
               ))}
             </ul>
 
-            {/* ✅ total uses resolver too */}
+            {/*  total uses resolver too */}
             <div className="mt-3 font-bold">
               Total: Rs.&nbsp;
               {(
@@ -349,6 +405,18 @@ export default function MyAppointmentPage() {
           onClose={() => setShowAddMore(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Delete appointment?"
+        message="This action cannot be undone. Are you sure you want to delete this appointment?"
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        loading={Boolean(deletingId)}
+        onConfirm={confirmDelete}
+        onClose={closeConfirm}
+      />
+
     </section>
   );
 }
@@ -402,9 +470,7 @@ function AddMoreModal({ appts, onSkip, onConfirm, onClose }) {
 
         <div className="mt-3 max-h-64 overflow-auto divide-y">
           {appts.length === 0 && (
-            <div className="text-gray-500 py-4">
-              No other pending appointments.
-            </div>
+            <div className="text-gray-500 py-4">No other pending appointments.</div>
           )}
           {appts.map((a) => (
             <label key={a.id} className="flex items-center gap-3 py-2">
