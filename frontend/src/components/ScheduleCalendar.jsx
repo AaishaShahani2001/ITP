@@ -38,8 +38,8 @@ export default function ScheduleCalendar({
   // Anchor for hiding past *days*
   const TODAY = startOfDay(new Date());
 
-  // ⚠️ NEW: Keep track of the *last fetched* visible range so we can refetch it when
-  // an external change happens (e.g., deletion elsewhere).
+  // Keep track of the *last fetched* visible range so we can refetch it when
+  // an external change happens (e.g., doctor/caretaker status change).
   const lastRangeRef = useRef({ start: null, end: null });
 
   // Color events by service
@@ -64,20 +64,35 @@ export default function ScheduleCalendar({
   };
   const GridEvent = ({ event }) => <div className="text-[12px]">{event.title}</div>;
 
+  /* -------------------------------------------------------
+   * NEW: Only show appointments that are "active" for calendar
+   *  - Hide anything user-cancelled (status === 'cancelled')
+   *  - Hide anything doctor/caretaker rejected (status === 'rejected')
+   * We also check 'state' just in case some endpoints use that field.
+   * ------------------------------------------------------- */
+  function isActiveForCalendar(a) {                    // ★ NEW
+    const s = String(a?.status ?? a?.state ?? "").toLowerCase();
+    return s !== "cancelled" && s !== "rejected";      // ★ NEW
+  }
+
   // --- Fetch helpers ---
   const fetchDay = useCallback(async (ymd) => {
+    // Map raw API items → calendar events, but first filter "inactive" ones.
     const mk = (arr, service) =>
-      (Array.isArray(arr) ? arr : []).map((a) => {
-        const startD = toDate(a.date || ymd, a.start);
-        const endD = toDate(a.date || ymd, a.end);
-        return {
-          id: a.id || a._id || `${service}-${ymd}-${a.start}-${a.end}`,
-          title: a.title || service,
-          start: startD,
-          end: endD,
-          resource: { service },
-        };
-      });
+      (Array.isArray(arr) ? arr : [])
+        .filter(isActiveForCalendar)                   // ★ NEW: hide cancelled/rejected
+        .map((a) => {
+          // Expect API to provide time strings like "10:00 AM" → we use toDate(ymd, ...)
+          const startD = toDate(a.date || a.dateISO || ymd, a.start);
+          const endD = toDate(a.date || a.dateISO || ymd, a.end);
+          return {
+            id: a.id || a._id || `${service}-${ymd}-${a.start}-${a.end}`,
+            title: a.title || a.selectedService || service,
+            start: startD,
+            end: endD,
+            resource: { service, status: a.status || a.state || "pending" },
+          };
+        });
 
     const [vRes, gRes, dRes] = await Promise.allSettled([
       fetch(`${API_BASE}/vet/appointments?date=${ymd}`),
@@ -88,15 +103,15 @@ export default function ScheduleCalendar({
     const dayEvents = [];
     if (vRes.status === "fulfilled" && vRes.value.ok) {
       const data = await vRes.value.json().catch(() => []);
-      dayEvents.push(...mk(data, "vet"));
+      dayEvents.push(...mk(data, "vet"));             // doctor approvals live here
     }
     if (gRes.status === "fulfilled" && gRes.value.ok) {
       const data = await gRes.value.json().catch(() => []);
-      dayEvents.push(...mk(data, "grooming"));
+      dayEvents.push(...mk(data, "grooming"));        // caretaker approvals live here
     }
     if (dRes.status === "fulfilled" && dRes.value.ok) {
       const data = await dRes.value.json().catch(() => []);
-      dayEvents.push(...mk(data, "daycare"));
+      dayEvents.push(...mk(data, "daycare"));         // caretaker approvals live here
     }
     return dayEvents;
   }, []);
@@ -108,7 +123,7 @@ export default function ScheduleCalendar({
       setLoading(true);
       const myLoadId = ++loadIdRef.current;
 
-      // ✅ Remember what we just asked the server for
+      // Remember the currently visible range; we'll reuse it on status changes
       lastRangeRef.current = { start, end };
 
       try {
@@ -172,16 +187,14 @@ export default function ScheduleCalendar({
     [fetchRange]
   );
 
-  // 🔔 NEW: Listen for "appointments:changed" (emitted by MyAppointmentPage after delete)
+  // Listen for "appointments:changed" (emitted by Doctor/Caretaker dashboards)
   // and refetch the *same* visible window so the calendar updates immediately.
   useEffect(() => {
     const onChanged = () => {
       const r = lastRangeRef.current;
       if (r?.start && r?.end) {
-        // Refetch the last visible range
         fetchRange(r.start, r.end);
       } else {
-        // Fallback: refetch current month if we don't have a range stored yet
         const { start, end } = getVisibleMonthRange(new Date());
         fetchRange(start, end);
       }

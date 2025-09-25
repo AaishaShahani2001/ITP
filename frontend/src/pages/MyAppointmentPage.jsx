@@ -13,7 +13,7 @@ const SERVICE_LABEL = {
 };
 
 const EDIT_PATH = {
-  vet: "/vet-edit",             // ← Vet edit page route in App.jsx
+  vet: "/vet-edit",     //vet-edit form
   grooming: "/grooming-booking",
   daycare: "/daycarebooking",
 };
@@ -28,9 +28,9 @@ const PRICE_TABLE = {
     "basic-bath-brush": 2500,
     "full-grooming": 6500,
     "nail-trim": 1500,
-    "de-shedding-treatment": 4500,
-    "flea & tick-treatment": 5500,
-    "premium-spa-package": 9500,
+    "deshedding": 4500,
+    "flea-tick": 5500,
+    "premium-spa": 9500,
   },
   daycare: {
     "half-day": 3000,
@@ -39,7 +39,7 @@ const PRICE_TABLE = {
   },
   vet: {
     "general-health-checkup": 7500,
-    vaccination: 4500,
+    "vaccination": 4500,
     "emergency-care": 15000,
   },
 };
@@ -66,18 +66,32 @@ function getPrice(a) {
   return Number.isFinite(Number(fromTable)) ? Number(fromTable) : 0;
 }
 
+/* ---------- NEW: date formatter used in the list ---------- */
+function fmtDate(ymd) { // NEW
+  // Accepts "YYYY-MM-DD" (date or dateISO). Falls back gracefully.
+  if (!ymd) return "-";
+  try {
+    const [Y, M, D] = String(ymd).split("-").map((n) => parseInt(n || "0", 10));
+    const d = new Date(Y, (M || 1) - 1, D || 1);
+    // e.g., "Sep 25, 2025" (uses user locale)
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+  } catch {
+    return ymd; // if it's already a readable string, just show it
+  }
+}
+
 export default function MyAppointmentPage() {
   const navigate = useNavigate();
-  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+  const { enqueueSnackbar } = useSnackbar();
   const [params] = useSearchParams();
   const [email, setEmail] = useState(() => params.get("email") || "");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // confirm dialog state
-const [confirmOpen, setConfirmOpen] = useState(false);
-const [pendingAppt, setPendingAppt] = useState(null);
-const [deletingId, setDeletingId] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingAppt, setPendingAppt] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   // cart bits
   const { addItem, addMany } = useCart();
@@ -86,20 +100,19 @@ const [deletingId, setDeletingId] = useState(null);
 
   const pendingTimersRef = useRef(new Map()); // id -> { timer, prevItems, snackbarKey }
 
-
- // normalize id in one place
+  // normalize id in one place
   const getApptId = (a) => a?._id || a?.id;
 
-// open/close dialog
-function openConfirm(appt) {
-  setPendingAppt(appt);
-  setConfirmOpen(true);
-}
-function closeConfirm() {
-  setConfirmOpen(false);
-  setPendingAppt(null);
-  setDeletingId(null);
-}
+  // open/close dialog
+  function openConfirm(appt) {
+    setPendingAppt(appt);
+    setConfirmOpen(true);
+  }
+  function closeConfirm() {
+    setConfirmOpen(false);
+    setPendingAppt(null);
+    setDeletingId(null);
+  }
 
   // --- API: fetch my appointments by email ---
   async function fetchMyAppointments(emailArg) {
@@ -142,50 +155,49 @@ function closeConfirm() {
   // auto-load if ?email= is present
   useEffect(() => {
     if (email) loadMine();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Actions (EDIT & DELETE) ---
 
   async function confirmDelete() {
-  if (!pendingAppt) return;
-  const id = getApptId(pendingAppt);
-  if (!id) {
-    enqueueSnackbar("Missing appointment id.", { variant: "warning" });
-    closeConfirm();
-    return;
-  }
-
-  // show 'Deleting…' on the confirm button
-  setDeletingId(id);
-
-  // Optimistic remove
-  const prevItems = items;
-  setItems((cur) => cur.filter((x) => getApptId(x) !== id));
-
-  try {
-    const res = await fetch(`${API_BASE}/${pendingAppt.service}/${id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      // revert on failure
-      setItems(prevItems);
-      enqueueSnackbar(data?.message || data?.error || "Delete failed", { variant: "error" });
+    if (!pendingAppt) return;
+    const id = getApptId(pendingAppt);
+    if (!id) {
+      enqueueSnackbar("Missing appointment id.", { variant: "warning" });
+      closeConfirm();
       return;
     }
 
-    enqueueSnackbar("Appointment deleted.", { variant: "success" });
+    // show 'Deleting…' on the confirm button
+    setDeletingId(id);
 
-    // notify calendar & dashboards
-    broadcastAppointmentsChanged({ action: "deleted", service: pendingAppt.service, id });
-  } catch (e) {
-    // revert on network error
-    setItems(prevItems);
-    enqueueSnackbar("Network error while deleting.", { variant: "error" });
-  } finally {
-    closeConfirm();
+    // Optimistic remove
+    const prevItems = items;
+    setItems((cur) => cur.filter((x) => getApptId(x) !== id));
+
+    try {
+      const res = await fetch(`${API_BASE}/${pendingAppt.service}/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        // revert on failure
+        setItems(prevItems);
+        enqueueSnackbar(data?.message || data?.error || "Delete failed", { variant: "error" });
+        return;
+      }
+
+      enqueueSnackbar("Appointment deleted.", { variant: "success" });
+
+      // notify calendar & dashboards
+      broadcastAppointmentsChanged({ action: "deleted", service: pendingAppt.service, id });
+    } catch (e) {
+      // revert on network error
+      setItems(prevItems);
+      enqueueSnackbar("Network error while deleting.", { variant: "error" });
+    } finally {
+      closeConfirm();
+    }
   }
-}
-
 
   function edit(appt) {
     const apptId = appt?.id || appt?._id;
@@ -292,11 +304,13 @@ function closeConfirm() {
                   </span>
                 </div>
                 <div className="text-slate-900 font-semibold">{a.title}</div>
+
+                {/* NEW: show Date • Start–End */}
                 <div className="text-sm text-slate-600">
-                  {a.date} • {a.start}–{a.end}
+                  {fmtDate(a.date || a.dateISO)} • {a.start}–{a.end}
                 </div>
 
-                {/*Price line (uses resolver) */}
+                {/* Price line (uses resolver) */}
                 <div className="mt-1 font-semibold">
                   Price: Rs. {getPrice(a).toFixed(2)}
                 </div>
@@ -360,7 +374,7 @@ function closeConfirm() {
               ))}
             </ul>
 
-            {/*  total uses resolver too */}
+            {/* total uses resolver too */}
             <div className="mt-3 font-bold">
               Total: Rs.&nbsp;
               {(
@@ -416,7 +430,6 @@ function closeConfirm() {
         onConfirm={confirmDelete}
         onClose={closeConfirm}
       />
-
     </section>
   );
 }
@@ -431,6 +444,7 @@ function Badge({ label, tone = "slate" }) {
     slate: "text-slate-700 bg-slate-100 ring-slate-200",
     blue: "text-blue-700 bg-blue-50 ring-blue-200",
   };
+
   return (
     <span
       className={`inline-flex items-center px-2.5 py-1 rounded-md ring-1 text-[12px] ${tones[tone]}`}

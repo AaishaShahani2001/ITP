@@ -13,29 +13,38 @@ function toHHMM(m) {
 
 /* ---------- GET /api/grooming/appointments?date=YYYY-MM-DD ---------- */
 /* Returns an array of {id,date,start,end,title,service} for the calendar */
+// GET /api/grooming/appointments?date=YYYY-MM-DD
 router.get("/appointments", async (req, res, next) => {
   try {
     const { date } = req.query;
     if (!date) return res.json([]);
 
+    //  `status` (preferred): pending | accepted | rejected | cancelled
+    // Filter out rejected/cancelled at the DB level
     const rows = await GroomingAppointment.find({ dateISO: date })
-      .sort({ timeSlotMinutes: 1 })
-      .lean();
+  .sort({ timeSlotMinutes: 1 })
+  .lean();
 
-    const items = rows.map((a) => ({
-      id: String(a._id),
-      date: a.dateISO,
-      start: toHHMM(a.timeSlotMinutes),
-      end: toHHMM((a.timeSlotMinutes || 0) + (a.durationMin || 60)), // default 60 mins for grooming
-      title: `${a.petType} • ${a.packageName || a.packageId || "Grooming"}`,
-      service: "grooming",
-    }));
+const filtered = rows.filter(
+  (r) => !["rejected", "cancelled"].includes(String(r.status || r.state || "").toLowerCase())
+);
+
+const items = filtered.map((a) => ({
+  id: String(a._id),
+  String: a.dateISO,
+  start: toHHMM(a.timeSlotMinutes),
+  end: toHHMM((a.timeSlotMinutes || 0) + (a.durationMin || 60)),
+  title: `${a.petType} • ${a.packageName || "Grooming"}`,
+  service: "grooming",
+  status: a.status || a.state || "pending",
+}));
 
     res.json(items);
   } catch (err) {
     next(err);
   }
 });
+
 
 // POST -> Create appointment for Grooming
 router.post("/appointments", async (req, res, next) => {

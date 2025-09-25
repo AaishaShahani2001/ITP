@@ -225,7 +225,7 @@ export default function EditVetForm() {
 
       if (r.ok) {
         enqueueSnackbar("Appointment updated successfully!", { variant: "success" });
-        navigate("/book/vetappointment"); // back to list/page
+        navigate("/myCareappointments");
       } else {
         enqueueSnackbar("❌ Error: " + (result?.message || "Update failed"), { variant: "error" });
       }
