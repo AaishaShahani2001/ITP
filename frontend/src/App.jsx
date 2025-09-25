@@ -15,6 +15,7 @@ import DoctorDashboard from './pages/DoctorDashboard.jsx';
 import Cart from './pages/Cart.jsx';
 import Checkout from './pages/Checkout.jsx';
 import PaymentSuccess from './pages/PaymentSuccess.jsx';
+import EditVetForm from './components/EditVetForm.jsx';
 
 
 const App = () => {
@@ -34,6 +35,8 @@ const App = () => {
       <Route path="/book/vetappointment" element={<VetCareDetails />} />
       {/* Vet Appointment Form */}
       <Route path="/vet-booking" element={<VeterinaryBookingForm />} />
+      {/* Vet Edit Form */}
+      <Route path="/vet-edit" element={<EditVetForm />} />
 
       {/* Pet Day  Care details Page */}
       <Route path="/book/daycare" element={<PetDaycareDetails />} />

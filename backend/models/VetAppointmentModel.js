@@ -9,7 +9,7 @@ const VetAppointmentSchema = new mongoose.Schema(
     petType: { type: String, enum: ["Dog", "Cat", "Rabbit", "Bird", "Other"], required: true },
     petSize: { type: String, enum: ["small", "medium", "large"], required: true },
 
-    reason: { type: String, required: true, trim: true },
+    reason: { type: String, trim: true },
 
     // Store date as YYYY-MM-DD for easy queries + the chosen time slot in minutes from midnight
     dateISO: { type: String, required: true }, // e.g. "2025-09-03"

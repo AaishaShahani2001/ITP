@@ -38,13 +38,17 @@ export default function ScheduleCalendar({
   // Anchor for hiding past *days*
   const TODAY = startOfDay(new Date());
 
+  // ⚠️ NEW: Keep track of the *last fetched* visible range so we can refetch it when
+  // an external change happens (e.g., deletion elsewhere).
+  const lastRangeRef = useRef({ start: null, end: null });
+
   // Color events by service
   const eventPropGetter = (event) => {
     const s = event.resource?.service;
     let style = { backgroundColor: "#e2e8f0", borderRadius: 8, border: "none", color: "#0f172a" };
-    if (s === "grooming") style.backgroundColor = "#fde7ff";
-    if (s === "vet") style.backgroundColor = "#dbeafe";
-    if (s === "daycare") style.backgroundColor = "#dcfce7";
+    if (s === "grooming") style.backgroundColor = "#fde7ff"; // light purple
+    if (s === "vet") style.backgroundColor = "#dbeafe";      // light blue
+    if (s === "daycare") style.backgroundColor = "#dcfce7";  // light green
     return { style };
   };
 
@@ -103,6 +107,10 @@ export default function ScheduleCalendar({
     async (start, end) => {
       setLoading(true);
       const myLoadId = ++loadIdRef.current;
+
+      // ✅ Remember what we just asked the server for
+      lastRangeRef.current = { start, end };
+
       try {
         // If whole range is past, show nothing
         if (end < TODAY) {
@@ -164,6 +172,25 @@ export default function ScheduleCalendar({
     [fetchRange]
   );
 
+  // 🔔 NEW: Listen for "appointments:changed" (emitted by MyAppointmentPage after delete)
+  // and refetch the *same* visible window so the calendar updates immediately.
+  useEffect(() => {
+    const onChanged = () => {
+      const r = lastRangeRef.current;
+      if (r?.start && r?.end) {
+        // Refetch the last visible range
+        fetchRange(r.start, r.end);
+      } else {
+        // Fallback: refetch current month if we don't have a range stored yet
+        const { start, end } = getVisibleMonthRange(new Date());
+        fetchRange(start, end);
+      }
+    };
+
+    window.addEventListener("appointments:changed", onChanged);
+    return () => window.removeEventListener("appointments:changed", onChanged);
+  }, [fetchRange, getVisibleMonthRange]);
+
   return (
     <section className="bg-white shadow-md rounded-2xl p-6">
       <div className="flex items-center justify-between mb-4">
@@ -173,17 +200,9 @@ export default function ScheduleCalendar({
 
       <Calendar
         localizer={localizer}
-
-        // 🟢 UNCONTROLLED calendar (no `date` prop). Header Next/Back works.
         onRangeChange={handleRangeChange}
-
-        // 🕳️ IMPORTANT PART:
-        //   - popup={false}: disables "+N more" popup.
-        //   - drilldownView=DAY: clicking "+N more" (or the date header)
-        //     will navigate to the Day view for that date.
-        popup={false}
-        drilldownView={Views.DAY}
-
+        popup={false}             // disables "+N more" popup.
+        drilldownView={Views.DAY} // clicking date header navigates to Day view
         events={events}
         views={[Views.DAY, Views.WEEK, Views.MONTH]}
         defaultView={Views.MONTH}
