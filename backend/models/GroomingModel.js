@@ -7,7 +7,9 @@ const GroomingAppointmentSchema = new mongoose.Schema(
     email:     { type: String, required: true, trim: true, lowercase: true },
 
     petType:   { type: String, required: true, enum: ["Dog","Cat","Rabbit","Bird","Other"] },
-    packageId: { type: String, required: true },
+    packageId: { type: String, required: true,
+      enum: ["basic-bath-brush", "full-grooming", "nail-trim", "deshedding", "flea-tick", "premium-spa"],
+     },
 
     dateISO:         { type: String, required: true },  // "YYYY-MM-DD"
     timeSlotMinutes: { type: Number, required: true },   // minutes from 00:00 (e.g. 10:30 AM = 630)

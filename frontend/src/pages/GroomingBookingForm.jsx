@@ -9,6 +9,19 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import groomingImg from "../assets/grooming.jpg";
 
+// ---- helpers: local-date formatting (no UTC shift) ----
+function toLocalYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function normalizeToLocalNoon(d) {
+  const c = new Date(d);
+  c.setHours(12, 0, 0, 0);
+  return c;
+}
+
 // Pet types
 const PET_TYPES = ["Dog", "Cat", "Rabbit", "Bird", "Other"];
 
@@ -30,51 +43,28 @@ const buildSlots = () => {
     const mm = m % 60;
     const h12 = ((h24 + 11) % 12) + 1;
     const ampm = h24 >= 12 ? "PM" : "AM";
-    out.push({
-      value: m,
-      label: `${String(h12).padStart(2, "0")}:${String(mm).padStart(2, "0")} ${ampm}`,
-    });
+    out.push({ value: m, label: `${String(h12).padStart(2, "0")}:${String(mm).padStart(2, "0")} ${ampm}` });
   }
   return out;
 };
 const TIME_SLOTS = buildSlots();
 
-/* ------- Strong validation rules (same pattern as Daycare) ------- */
-// Phone: exactly 10 digits + approved prefixes
+/* ------- validation ------- */
 const LK_PHONE_REGEX = /^(011|070|071|072|075|076|077|078)\d{7}$/;
-// Name: letters + spaces only
 const NAME_REGEX = /^[A-Za-z\s]+$/;
 
 const schema = yup.object({
-  ownerName: yup
-    .string()
-    .transform((v) => (typeof v === "string" ? v.trim() : v))
-    .required("Owner name is required.")
-    .matches(NAME_REGEX, "Only letters and spaces are allowed.")
-    .min(2, "Too short.")
-    .max(60, "Too long."),
-  phone: yup
-    .string()
-    .required("Phone number is required.")
-    .matches(LK_PHONE_REGEX, "Must be 10 digits and start with 011/070/071/072/075/076/077/078."),
-  email: yup.string().email("Enter a valid email address").required("Email is required."),
-  petType: yup.string().oneOf(PET_TYPES, "Select a valid pet type").required("Pet type is required."),
-  packageId: yup
-    .string()
-    .oneOf(PACKAGES.map((p) => p.id), "Select a valid package")
-    .required("Package is required."),
-  date: yup
-    .date()
-    .typeError("Choose a valid date.")
+  ownerName: yup.string().transform(v => (typeof v === "string" ? v.trim() : v))
+    .required().matches(NAME_REGEX).min(2).max(60),
+  phone: yup.string().required().matches(LK_PHONE_REGEX),
+  email: yup.string().email().required(),
+  petType: yup.string().oneOf(PET_TYPES).required(),
+  packageId: yup.string().oneOf(PACKAGES.map(p => p.id)).required(),
+  date: yup.date().typeError("Choose a valid date.")
     .required("Preferred date is required.")
     .min(new Date(new Date().setHours(0, 0, 0, 0)), "Date cannot be in the past."),
-  timeSlot: yup
-    .number()
-    .typeError("Select a time slot.")
-    .required("Time slot is required.")
-    .min(8 * 60)
-    .max(20 * 60),
-  notes: yup.string().max(400, "Keep notes under 400 characters."),
+  timeSlot: yup.number().typeError("Select a time slot.").required().min(480).max(1200),
+  notes: yup.string().max(400),
 });
 
 export default function GroomingBookingForm() {
@@ -82,7 +72,7 @@ export default function GroomingBookingForm() {
   const [params] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
 
-  // Prefill from query ?service=...&price=...
+  // Prefill from query
   const preService = params.get("service") || "";
   const prePrice = params.get("price") || "";
   const defaultPkg =
@@ -101,7 +91,7 @@ export default function GroomingBookingForm() {
       phone: "",
       email: "",
       petType: "",
-      packageId: defaultPkg,  // preselect if provided
+      packageId: defaultPkg,
       date: null,
       timeSlot: undefined,
       notes: "",
@@ -109,13 +99,16 @@ export default function GroomingBookingForm() {
   });
 
   const onSubmit = async (vals) => {
+    // ✅ timezone-safe date
+    const dateISO = toLocalYMD(normalizeToLocalNoon(vals.date));
+
     const payload = {
       ownerName: vals.ownerName.trim(),
       phone: vals.phone.trim(),
       email: vals.email.trim(),
       petType: vals.petType,
       packageId: vals.packageId,
-      dateISO: vals.date.toISOString().split("T")[0],
+      dateISO, // <-- changed
       timeSlotMinutes: Number(vals.timeSlot),
       notes: vals.notes?.trim() || "",
     };
@@ -146,31 +139,22 @@ export default function GroomingBookingForm() {
     }
   };
 
-  // helpers to find package label
   const pkgById = (id) => PACKAGES.find((p) => p.id === id);
   const lockedLabel = defaultPkg ? `${pkgById(defaultPkg)?.name} — Rs.${pkgById(defaultPkg)?.price}` : "";
 
   return (
     <section className="bg-white min-h-screen">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* Unified card: image + form */}
         <div className="grid lg:grid-cols-2 gap-8 items-stretch">
-          {/* Image */}
           <div className="relative overflow-hidden rounded-2xl shadow-sm ring-1 ring-black/5">
             <img src={groomingImg} alt="Pet grooming" className="h-full w-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-tr from-fuchsia-600/20 to-violet-600/10" />
           </div>
 
-          {/* Form */}
           <div className="bg-gray-50 rounded-2xl p-6 ring-1 ring-black/5">
-            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-2">
-              Book Grooming Appointment
-            </h2>
-            <p className="text-slate-600 mb-4">
-              Choose a package and your preferred date & time.
-            </p>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-2">Book Grooming Appointment</h2>
+            <p className="text-slate-600 mb-4">Choose a package and your preferred date & time.</p>
 
-            {/* Selected package summary (if coming from list) */}
             {preService && (
               <div className="mb-6 rounded-xl bg-violet-50 text-violet-900 px-4 py-3 ring-1 ring-violet-200">
                 <div className="font-semibold">Selected:</div>
@@ -184,34 +168,26 @@ export default function GroomingBookingForm() {
               {/* Owner info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Owner Name
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
                   <input
                     type="text"
                     placeholder="e.g., Aaisha Shahani"
                     {...register("ownerName")}
-                    // Live sanitizing: letters + spaces only
                     onInput={(e) => {
                       const v = e.currentTarget.value.replace(/[^A-Za-z\s]/g, "");
                       if (v !== e.currentTarget.value) e.currentTarget.value = v;
                     }}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500"
                   />
-                  {errors.ownerName && (
-                    <p className="mt-1 text-sm text-red-600">{errors.ownerName.message}</p>
-                  )}
+                  {errors.ownerName && <p className="mt-1 text-sm text-red-600">{errors.ownerName.message}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Phone
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
                   <input
                     type="tel"
                     placeholder="0711234567"
                     {...register("phone")}
-                    // Live sanitizing: digits only + max 10
                     onInput={(e) => {
                       const digits = e.currentTarget.value.replace(/\D/g, "").slice(0, 10);
                       if (digits !== e.currentTarget.value) e.currentTarget.value = digits;
@@ -221,61 +197,44 @@ export default function GroomingBookingForm() {
                   <p className="mt-1 text-[12px] text-slate-500">
                     Must start with 011/070/071/072/075/076/077/078 and be 10 digits.
                   </p>
-                  {errors.phone && (
-                    <p className="mt-1 text-sm text-red-600">{errors.phone.message}</p>
-                  )}
+                  {errors.phone && <p className="mt-1 text-sm text-red-600">{errors.phone.message}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Email
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
                   <input
                     type="email"
                     placeholder="you@example.com"
                     {...register("email")}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500"
                   />
-                  {errors.email && (
-                    <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
-                  )}
+                  {errors.email && <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>}
                 </div>
               </div>
 
               {/* Pet type & package */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Pet Type
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Pet Type</label>
                   <select
                     {...register("petType")}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500"
                   >
                     <option value="">Select pet type</option>
                     {PET_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
+                      <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
-                  {errors.petType && (
-                    <p className="mt-1 text-sm text-red-600">{errors.petType.message}</p>
-                  )}
+                  {errors.petType && <p className="mt-1 text-sm text-red-600">{errors.petType.message}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Service Package
-                  </label>
-
-                  {/* If preselected via query, lock it (disabled select + hidden field) */}
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Service Package</label>
                   {isLockedPackage ? (
                     <>
                       <div className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
                         {lockedLabel}
                       </div>
-                      {/* disabled fields don't submit -> keep a hidden input bound to RHF */}
                       <input type="hidden" value={defaultPkg} {...register("packageId")} />
                     </>
                   ) : (
@@ -285,25 +244,18 @@ export default function GroomingBookingForm() {
                     >
                       <option value="">Select a package</option>
                       {PACKAGES.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} — Rs.{p.price}
-                        </option>
+                        <option key={p.id} value={p.id}>{p.name} — Rs.{p.price}</option>
                       ))}
                     </select>
                   )}
-
-                  {errors.packageId && (
-                    <p className="mt-1 text-sm text-red-600">{errors.packageId.message}</p>
-                  )}
+                  {errors.packageId && <p className="mt-1 text-sm text-red-600">{errors.packageId.message}</p>}
                 </div>
               </div>
 
               {/* Date & Time */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Preferred Date
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Preferred Date</label>
                   <Controller
                     control={control}
                     name="date"
@@ -319,46 +271,34 @@ export default function GroomingBookingForm() {
                       />
                     )}
                   />
-                  {errors.date && (
-                    <p className="mt-1 text-sm text-red-600">{errors.date.message}</p>
-                  )}
+                  {errors.date && <p className="mt-1 text-sm text-red-600">{errors.date.message}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Preferred Time
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Preferred Time</label>
                   <select
                     {...register("timeSlot")}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500"
                   >
                     <option value="">Select time</option>
                     {TIME_SLOTS.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
+                      <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
-                  {errors.timeSlot && (
-                    <p className="mt-1 text-sm text-red-600">{errors.timeSlot.message}</p>
-                  )}
+                  {errors.timeSlot && <p className="mt-1 text-sm text-red-600">{errors.timeSlot.message}</p>}
                 </div>
               </div>
 
               {/* Notes */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Special Requests / Notes
-                </label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Special Requests / Notes</label>
                 <textarea
                   rows={4}
                   placeholder="Any behaviors, allergies, sensitivities, or grooming preferences…"
                   {...register("notes")}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 />
-                {errors.notes && (
-                  <p className="mt-1 text-sm text-red-600">{errors.notes.message}</p>
-                )}
+                {errors.notes && <p className="mt-1 text-sm text-red-600">{errors.notes.message}</p>}
               </div>
 
               {/* Actions */}

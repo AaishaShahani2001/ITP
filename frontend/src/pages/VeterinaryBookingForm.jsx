@@ -1,3 +1,4 @@
+// src/pages/VeterinaryBookingForm.jsx
 import React, { useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -7,6 +8,20 @@ import { useForm, Controller } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import vetImg from "../assets/vet.jpg";
+
+// ---- helpers: local date -> "YYYY-MM-DD" (no UTC) ----
+function toLocalYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+// safer: normalize to local noon before formatting
+function normalizeToLocalNoon(d) {
+  const copy = new Date(d);
+  copy.setHours(12, 0, 0, 0);
+  return copy;
+}
 
 // Pet types & sizes
 const PET_TYPES = ["Dog", "Cat", "Rabbit", "Bird", "Other"];
@@ -60,7 +75,6 @@ const schema = yup.object({
     .matches(NAME_REGEX, "Only letters and spaces are allowed.")
     .min(2, "Too short.")
     .max(60, "Too long."),
-
   ownerEmail: yup
     .string()
     .transform((v) => (typeof v === "string" ? v.trim().toLowerCase() : v))
@@ -73,21 +87,20 @@ const schema = yup.object({
       const domain = val.split("@")[1];
       return domain && !DISPOSABLE_DOMAINS.has(domain.toLowerCase());
     }),
-
   ownerPhone: yup
     .string()
     .required("Contact number is required.")
     .matches(LK_PHONE_REGEX, "Must start with 011/070/071/072/075/076/077/078 and be 10 digits."),
-
   petType: yup.string().oneOf(PET_TYPES, "Select a valid pet type").required("Select pet type."),
   petSize: yup
     .string()
     .oneOf(PET_SIZES.map((p) => p.value), "Select a valid size")
     .required("Select pet size."),
-
-  // If preselected, we’ll lock it in the UI, but keep schema simple:
-  reason: yup.string().required("Reason is required.").min(5, "Please add a bit more detail.").max(300, "Keep it under 300 characters."),
-
+  reason: yup
+    .string()
+    .required("Reason is required.")
+    .min(5, "Please add a bit more detail.")
+    .max(300, "Keep it under 300 characters."),
   date: yup
     .date()
     .typeError("Choose a valid date.")
@@ -99,7 +112,6 @@ const schema = yup.object({
     .required("Time slot is required.")
     .min(8 * 60)
     .max(20 * 60),
-
   medicalFile: yup
     .mixed()
     .test("fileSize", "File too large (max 5 MB).", (value) => {
@@ -129,7 +141,6 @@ export default function VeterinaryBookingForm() {
     handleSubmit,
     control,
     formState: { errors, isSubmitting },
-    setValue,
   } = useForm({
     resolver: yupResolver(schema),
     defaultValues: {
@@ -155,7 +166,11 @@ export default function VeterinaryBookingForm() {
       fd.append("petType", values.petType);
       fd.append("petSize", values.petSize);
       fd.append("reason", (lockedReason || values.reason || "").trim());
-      fd.append("dateISO", values.date.toISOString().split("T")[0]);
+
+      // ✅ TZ-safe: format local date to "YYYY-MM-DD" without toISOString()
+      const localNoon = normalizeToLocalNoon(values.date);
+      fd.append("dateISO", toLocalYMD(localNoon));
+
       fd.append("timeSlotMinutes", String(values.timeSlot));
       if (values.medicalFile && values.medicalFile.length > 0) {
         fd.append("medicalFile", values.medicalFile[0]);
@@ -185,12 +200,10 @@ export default function VeterinaryBookingForm() {
   };
 
   // -------- Live input guards (like daycare/grooming) --------
-  // Owner name: strip any non-letter/space, keep length as typed
   const onOwnerNameInput = (e) => {
     const v = e.currentTarget.value.replace(/[^A-Za-z\s]/g, "");
     if (v !== e.currentTarget.value) e.currentTarget.value = v;
   };
-  // Phone: keep digits only, cap to 10
   const onPhoneInput = (e) => {
     const digits = e.currentTarget.value.replace(/\D/g, "").slice(0, 10);
     if (digits !== e.currentTarget.value) e.currentTarget.value = digits;
@@ -199,7 +212,6 @@ export default function VeterinaryBookingForm() {
   return (
     <section className="bg-white min-h-screen">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* Two-column layout: image left, form right */}
         <div className="grid lg:grid-cols-2 gap-8 items-stretch">
           {/* Left: Image */}
           <div className="relative overflow-hidden rounded-2xl shadow-sm ring-1 ring-black/5">
@@ -212,9 +224,10 @@ export default function VeterinaryBookingForm() {
             <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-2">
               Book Veterinary Care
             </h2>
-            <p className="text-slate-600 mb-4">Fill in the details below and we’ll confirm your appointment.</p>
+            <p className="text-slate-600 mb-4">
+              Fill in the details below and we’ll confirm your appointment.
+            </p>
 
-            {/* Selected service summary (optional) */}
             {selectedService && (
               <div className="mb-6 rounded-xl bg-blue-50 text-blue-800 px-4 py-3 ring-1 ring-blue-200">
                 <div className="font-semibold">Selected Service:</div>
@@ -233,7 +246,7 @@ export default function VeterinaryBookingForm() {
                     type="text"
                     placeholder="e.g., Aaisha Shahani"
                     {...register("ownerName")}
-                    onInput={onOwnerNameInput} // live sanitizing
+                    onInput={onOwnerNameInput}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {errors.ownerName && <p className="mt-1 text-sm text-red-600">{errors.ownerName.message}</p>}
@@ -245,7 +258,7 @@ export default function VeterinaryBookingForm() {
                     type="tel"
                     placeholder="0711234567"
                     {...register("ownerPhone")}
-                    onInput={onPhoneInput} // live sanitizing
+                    onInput={onPhoneInput}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <p className="mt-1 text-[12px] text-slate-500">
@@ -307,13 +320,11 @@ export default function VeterinaryBookingForm() {
               {/* Reason (locked if ?service=... present) */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Reason for Consulting</label>
-
                 {lockedReason ? (
                   <>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
                       {lockedReason}
                     </div>
-                    {/* disabled fields don’t submit: keep a hidden field for submission */}
                     <input type="hidden" value={lockedReason} {...register("reason")} />
                   </>
                 ) : (
@@ -387,7 +398,7 @@ export default function VeterinaryBookingForm() {
                   rows={3}
                   placeholder="Allergies, medications, previous conditions, etc."
                   {...register("notes")}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
                 />
                 {errors.notes && <p className="mt-1 text-sm text-red-600">{errors.notes.message}</p>}
               </div>
