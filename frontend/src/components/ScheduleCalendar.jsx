@@ -1,5 +1,4 @@
-// src/pages/ScheduleCalendar.jsx
-import React, { useMemo, useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Calendar, dateFnsLocalizer, Views } from "react-big-calendar";
 import {
   format,
@@ -33,14 +32,13 @@ export default function ScheduleCalendar({
   slotMinutes = 30,
   onBook = () => {},
 }) {
-  const [date, setDate] = useState(new Date());
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // 💡 "Today @ 00:00" boundary used everywhere to filter out past *days*
+  // Anchor for hiding past *days*
   const TODAY = startOfDay(new Date());
 
-  // color events by service
+  // Color events by service
   const eventPropGetter = (event) => {
     const s = event.resource?.service;
     let style = { backgroundColor: "#e2e8f0", borderRadius: 8, border: "none", color: "#0f172a" };
@@ -50,7 +48,7 @@ export default function ScheduleCalendar({
     return { style };
   };
 
-  // ---------- custom event renderers ----------
+  // Tiny event renderers
   const MonthEvent = ({ event }) => {
     const t = `${format(event.start, "hh:mm a")}–${format(event.end, "hh:mm a")}`;
     return (
@@ -62,7 +60,7 @@ export default function ScheduleCalendar({
   };
   const GridEvent = ({ event }) => <div className="text-[12px]">{event.title}</div>;
 
-  // fetch one day from all services
+  // --- Fetch helpers ---
   const fetchDay = useCallback(async (ymd) => {
     const mk = (arr, service) =>
       (Array.isArray(arr) ? arr : []).map((a) => {
@@ -70,7 +68,7 @@ export default function ScheduleCalendar({
         const endD = toDate(a.date || ymd, a.end);
         return {
           id: a.id || a._id || `${service}-${ymd}-${a.start}-${a.end}`,
-          title: a.title || service, // title WITHOUT time (Day/Week already show time)
+          title: a.title || service,
           start: startD,
           end: endD,
           resource: { service },
@@ -99,25 +97,22 @@ export default function ScheduleCalendar({
     return dayEvents;
   }, []);
 
-  // --------- range loader with batching + guard ----------
   const loadIdRef = useRef(0);
 
   const fetchRange = useCallback(
     async (start, end) => {
       setLoading(true);
-      const myLoadId = ++loadIdRef.current; // newer navigations cancel older loads
+      const myLoadId = ++loadIdRef.current;
       try {
-        // If the whole range is in the past, don't fetch anything.
+        // If whole range is past, show nothing
         if (end < TODAY) {
           if (loadIdRef.current === myLoadId) setEvents([]);
           return;
         }
+        // Only fetch from today forward
+        const days = enumerateDays(start, end).filter((d) => d >= TODAY);
 
-        //  Only fetch from TODAY forward — this is the key change.
-        const days = enumerateDays(start, end)
-          .filter((d) => d >= TODAY); // <-- filter out past *days*
-
-        const BATCH = 7; // fetch 7 days at a time (keeps Month snappy)
+        const BATCH = 7;
         const all = [];
         for (let i = 0; i < days.length; i += BATCH) {
           const chunk = days.slice(i, i + BATCH);
@@ -136,44 +131,37 @@ export default function ScheduleCalendar({
     [fetchDay, TODAY]
   );
 
-  // compute the full visible grid for a given month (Mon–Sun rows)
+  // Full visible grid for a month (Mon–Sun rows)
   const getVisibleMonthRange = useCallback((anchorDate) => {
     const start = startOfWeek(startOfMonth(anchorDate), { weekStartsOn: 1 });
     const end = endOfWeek(endOfMonth(anchorDate), { weekStartsOn: 1 });
     return { start: startOfDay(start), end: startOfDay(end) };
   }, []);
 
-  // react-big-calendar calls this when the grid changes (dragging / buttons)
+  // Initial load → current month grid
+  useEffect(() => {
+    const now = new Date();
+    const { start, end } = getVisibleMonthRange(now);
+    fetchRange(start, end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The ONLY driver after mount: visible range changes (Month/Week/Day)
   const handleRangeChange = useCallback(
     (range) => {
       if (Array.isArray(range)) {
-        // Month view -> array of dates covering the grid
+        // Month view → array of grid dates
         const start = startOfDay(range[0]);
         const end = startOfDay(range[range.length - 1]);
         fetchRange(start, end);
-        setDate(range[0] || new Date());
       } else if (range && range.start && range.end) {
-        // Day/Week -> {start, end}
+        // Day/Week → { start, end }
         const start = startOfDay(range.start);
         const end = startOfDay(range.end);
         fetchRange(start, end);
-        setDate(range.start);
       }
     },
     [fetchRange]
-  );
-
-  // Proactively load when user clicks Next/Back/Today in Month view
-  const handleNavigate = useCallback(
-    (newDate, view) => {
-      setDate(newDate);
-      if (view === Views.MONTH) {
-        const { start, end } = getVisibleMonthRange(newDate);
-        fetchRange(start, end);
-      }
-      // For Day/Week, onRangeChange fires with the right span; no extra work needed
-    },
-    [fetchRange, getVisibleMonthRange]
   );
 
   return (
@@ -185,20 +173,28 @@ export default function ScheduleCalendar({
 
       <Calendar
         localizer={localizer}
-        date={date}
-        onNavigate={handleNavigate}         // keep our navigate handler
-        onRangeChange={handleRangeChange}   // trigger loads on view/span changes
+
+        // 🟢 UNCONTROLLED calendar (no `date` prop). Header Next/Back works.
+        onRangeChange={handleRangeChange}
+
+        // 🕳️ IMPORTANT PART:
+        //   - popup={false}: disables "+N more" popup.
+        //   - drilldownView=DAY: clicking "+N more" (or the date header)
+        //     will navigate to the Day view for that date.
+        popup={false}
+        drilldownView={Views.DAY}
+
         events={events}
         views={[Views.DAY, Views.WEEK, Views.MONTH]}
-        defaultView={Views.WEEK}
+        defaultView={Views.MONTH}
         step={slotMinutes}
         timeslots={1}
         min={timeOfDay(startHour)}
         max={timeOfDay(endHour)}
         selectable
-        // ❗ Optional: Block booking in the past (defensive UX)
+        // Block booking in the past
         onSelectSlot={({ start, end }) => {
-          if (startOfDay(start) < TODAY) return; // ignore clicks on past days
+          if (startOfDay(start) < TODAY) return;
           onBook({ start, end });
         }}
         startAccessor="start"
