@@ -1,13 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useSnackbar } from "notistack";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams, useLocation } from "react-router-dom";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { useForm, Controller } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 
-/* ---------- Shared constants (same as create form) ---------- */
+/* ---------- Shared constants  ---------- */
 const PET_TYPES = ["Dog", "Cat", "Rabbit", "Bird", "Other"];
 const PET_SIZES = [
   { value: "small", label: "Small (0–10 kg)" },
@@ -70,21 +70,13 @@ const schema = yup.object({
     .required("Contact number is required.")
     .matches(LK_PHONE_REGEX, "Must start with 011/070/071/072/075/076/077/078 and be 10 digits."),
   petType: yup.string().oneOf(PET_TYPES, "Select a valid pet type").required("Select pet type."),
-  petSize: yup
-    .string()
-    .oneOf(PET_SIZES.map((p) => p.value), "Select a valid size")
-    .required("Select pet size."),
+  petSize: yup.string().oneOf(PET_SIZES.map((p) => p.value), "Select a valid size").required("Select pet size."),
   date: yup
     .date()
     .typeError("Choose a valid date.")
     .required("Preferred date is required.")
     .min(new Date(new Date().setHours(0, 0, 0, 0)), "Date cannot be in the past."),
-  timeSlot: yup
-    .number()
-    .typeError("Select a time slot.")
-    .required("Time slot is required.")
-    .min(8 * 60)
-    .max(20 * 60),
+  timeSlot: yup.number().typeError("Select a time slot.").required("Time slot is required.").min(8 * 60).max(20 * 60),
   medicalFile: yup
     .mixed()
     .test("fileSize", "File too large (max 5 MB).", (value) => {
@@ -102,11 +94,20 @@ const schema = yup.object({
 export default function EditVetForm() {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
-  const { id } = useParams();
+  const { id: idFromParams } = useParams();
   const [params] = useSearchParams();
+  const location = useLocation(); // <-- ADD THIS
 
-  // If you navigated here with ?service=... we’ll still show that,
-  // but for EDIT we keep reason locked regardless (read-only box + hidden field).
+  // Prefer param, then query (?editId), then state
+  const editId =
+    idFromParams ||
+    params.get("editId") ||
+    location.state?.appointment?._id ||
+    location.state?.appointment?.id;
+
+  // If no id, you can redirect or show a message (optional)
+  // if (!editId) return <div className="p-6">Missing appointment id.</div>;
+
   const selectedService = params.get("service") || "";
   const selectedPrice = params.get("price") || "";
 
@@ -134,7 +135,6 @@ export default function EditVetForm() {
     },
   });
 
-  // Small helpers
   const onOwnerNameInput = (e) => {
     const v = e.currentTarget.value.replace(/[^A-Za-z\s]/g, "");
     if (v !== e.currentTarget.value) e.currentTarget.value = v;
@@ -147,10 +147,11 @@ export default function EditVetForm() {
   // ---- Fetch existing appointment ----
   useEffect(() => {
     let ignore = false;
+    if (!editId) return;
+
     const fetchData = async () => {
       try {
-        // Adjust this URL if your route is different (e.g., /api/vet/:id)
-        const r = await fetch(`http://localhost:3000/api/vet/${id}`);
+        const r = await fetch(`http://localhost:3000/api/vet/${editId}`);
         const ct = r.headers.get("content-type") || "";
         const data = ct.includes("application/json") ? await r.json() : await r.text();
 
@@ -159,12 +160,15 @@ export default function EditVetForm() {
           return;
         }
 
-        const appt = data?.data || data; // support either {data} or raw
+        const appt = data?.data || data;
         if (!appt || ignore) return;
 
-        // Expecting fields like these on your document:
-        // ownerName, ownerPhone, ownerEmail, petType, petSize, reason, dateISO, timeSlotMinutes, notes
         const dateObj = appt.dateISO ? new Date(appt.dateISO) : null;
+
+        const lockedReason =
+          appt.reason && appt.reason.trim()
+            ? appt.reason.trim()
+            : (selectedService ? `Consultation for ${selectedService}` : "");
 
         reset({
           ownerName: appt.ownerName || "",
@@ -172,22 +176,25 @@ export default function EditVetForm() {
           ownerEmail: appt.ownerEmail || "",
           petType: appt.petType || "",
           petSize: appt.petSize || "",
-          reason: appt.reason || selectedService ? `Consultation for ${selectedService}` : appt.reason || "",
+          reason: lockedReason,
           date: dateObj,
           timeSlot: appt.timeSlotMinutes ?? "",
           medicalFile: undefined,
           notes: appt.notes || "",
         });
+
+        setValue("reason", lockedReason, { shouldValidate: false, shouldDirty: false });
       } catch (e) {
         console.error(e);
         enqueueSnackbar("Error loading appointment", { variant: "error" });
       }
     };
-    if (id) fetchData();
+
+    fetchData();
     return () => {
       ignore = true;
     };
-  }, [id, reset, enqueueSnackbar, selectedService]);
+  }, [editId, reset, setValue, enqueueSnackbar, selectedService]);
 
   const reasonLockedValue = watch("reason") || (selectedService ? `Consultation for ${selectedService}` : "");
 
@@ -201,23 +208,20 @@ export default function EditVetForm() {
       fd.append("petType", values.petType);
       fd.append("petSize", values.petSize);
 
-      // Reason locked/read-only
-      fd.append("reason", (reasonLockedValue || "").trim());
+      fd.append("reason", (reasonLockedValue || "").trim()); // locked
 
-      // Normalize date + time slot
       fd.append("dateISO", values.date.toISOString().split("T")[0]);
       fd.append("timeSlotMinutes", String(values.timeSlot));
 
       if (values.medicalFile && values.medicalFile.length > 0) {
-        fd.append("medicalFile", values.medicalFile[0]); // only send if user selected a new file
+        fd.append("medicalFile", values.medicalFile[0]);
       }
       fd.append("notes", values.notes || "");
 
       if (selectedService) fd.append("selectedService", selectedService);
       if (selectedPrice) fd.append("selectedPrice", selectedPrice);
 
-      // ⚠️ If your backend route is PUT /api/vet/:id, change the URL below.
-      const UPDATE_URL = `http://localhost:3000/api/vet/${id}`;
+      const UPDATE_URL = `http://localhost:3000/api/vet/${editId}`;
       const r = await fetch(UPDATE_URL, { method: "PUT", body: fd });
 
       const ct = r.headers.get("content-type") || "";
@@ -225,10 +229,19 @@ export default function EditVetForm() {
 
       if (r.ok) {
         enqueueSnackbar("Appointment updated successfully!", { variant: "success" });
-        navigate("/myCareappointments");
-      } else {
-        enqueueSnackbar("❌ Error: " + (result?.message || "Update failed"), { variant: "error" });
+
+        // notify the list page to refetch, then navigate back
+        window.dispatchEvent(
+          new CustomEvent("appointments:changed", {
+            detail: { service: "vet", id: editId, action: "updated" },
+          })
+        );
+
+        navigate(`/myCareappointments?email=${encodeURIComponent(values.ownerEmail)}`);
+        return;
       }
+
+      enqueueSnackbar("❌ Error: " + (result?.message || "Update failed"), { variant: "error" });
     } catch (error) {
       console.error("Update error:", error);
       enqueueSnackbar("Something went wrong!", { variant: "error" });
@@ -238,12 +251,10 @@ export default function EditVetForm() {
   return (
     <section className="bg-white min-h-screen">
       <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* Centered card */}
         <div className="bg-gray-50 rounded-2xl p-6 ring-1 ring-black/5">
           <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 mb-2">Edit Veterinary Appointment</h2>
           <p className="text-slate-600 mb-4">Update the details below and save your changes.</p>
 
-          {/* Optional selected service summary (if present via URL) */}
           {selectedService && (
             <div className="mb-6 rounded-xl bg-blue-50 text-blue-800 px-4 py-3 ring-1 ring-blue-200">
               <div className="font-semibold">Selected Service:</div>
@@ -254,7 +265,6 @@ export default function EditVetForm() {
           )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-            {/* Owner info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Owner Name</label>
@@ -283,7 +293,6 @@ export default function EditVetForm() {
                 {errors.ownerPhone && <p className="mt-1 text-sm text-red-600">{errors.ownerPhone.message}</p>}
               </div>
 
-              {/* Owner Email */}
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Owner Email</label>
                 <input
@@ -298,7 +307,6 @@ export default function EditVetForm() {
               </div>
             </div>
 
-            {/* Pet type & size */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Pet Type</label>
@@ -336,10 +344,13 @@ export default function EditVetForm() {
             {/* Reason (LOCKED in edit) */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Reason for Consulting</label>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
-                {reasonLockedValue || "—"}
-              </div>
-              <input type="hidden" {...register("reason")} value={reasonLockedValue || ""} readOnly />
+              <input
+                type="text"
+                readOnly
+                {...register("reason")}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700
+                           focus:outline-none focus:ring-0 cursor-not-allowed select-none"
+              />
               <p className="mt-1 text-xs text-slate-500">Reason is locked for edits. To change it, create a new booking.</p>
               {errors.reason && <p className="mt-1 text-sm text-red-600">{errors.reason.message}</p>}
             </div>

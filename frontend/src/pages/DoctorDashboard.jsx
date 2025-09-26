@@ -11,6 +11,12 @@ function broadcastAppointmentsChanged(detail = {}) {
   window.dispatchEvent(new CustomEvent("appointments:changed", { detail }));
 }
 
+const getBookedAtMs = (x) =>
+  x?.createdAt ? new Date(x.createdAt).getTime()
+               // fallback: derive timestamp from ObjectId if createdAt is missing
+               : (x?._id ? parseInt(x._id.substring(0, 8), 16) * 1000 : 0);
+
+
 const VIEW_FILTERS = [
   { value: "all", label: "All appointments" },
   { value: "pending", label: "Pending only" },
@@ -65,6 +71,8 @@ export default function DoctorDashboard() {
     setConfirmBusy(false);
   }
 
+  
+
   // Load appointments (includes medicalFilePath if uploaded)
   useEffect(() => {
     let mounted = true;
@@ -105,25 +113,27 @@ export default function DoctorDashboard() {
 
   // Filter by status/pet/search
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return items.filter((a) => {
-      // Safety: only vet items if you mix services in the same collection
-      if (a.service && a.service !== "vet") return false;
+  const q = query.trim().toLowerCase();
 
-      if (view === "pending" && a.status !== "pending") return false;
-      if (view === "accepted" && a.status !== "accepted") return false;
-      if (view === "rejected" && a.status !== "rejected") return false;
-      if (view === "today" && a.dateISO !== todayYMD) return false;
-      if (view === "next7" && !inNext7(a.dateISO)) return false;
+  const base = items.filter((a) => {
+    if (a.service && a.service !== "vet") return false;
 
-      if (petType !== "all" && a.petType !== petType) return false;
+    if (view === "pending" && a.status !== "pending") return false;
+    if (view === "accepted" && a.status !== "accepted") return false;
+    if (view === "rejected" && a.status !== "rejected") return false;
+    if (view === "today" && a.dateISO !== todayYMD) return false;
+    if (view === "next7" && !inNext7(a.dateISO)) return false;
 
-      // Package/services text search
-      if (q && !(a.selectedService || "").toLowerCase().includes(q)) return false;
+    if (petType !== "all" && a.petType !== petType) return false;
 
-      return true;
-    });
-  }, [items, view, petType, todayYMD, query]);
+    if (q && !(a.selectedService || "").toLowerCase().includes(q)) return false;
+
+    return true;
+  });
+
+  // 🔽 sort by booking order (newest first)
+  return base.slice().sort((a, b) => getBookedAtMs(b) - getBookedAtMs(a));
+}, [items, view, petType, todayYMD, query]);
 
   // Accept/Reject actions
   async function updateStatus(id, status) {
