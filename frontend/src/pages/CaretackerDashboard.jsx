@@ -236,13 +236,13 @@ function closeConfirm() {
       return acc;
     }, {});
 
-    // revenue totals
+    {/* revenue totals
     const sum = (arr) => arr.reduce((t, x) => t + (Number(x.amount) || 0), 0);
     const revenueTotal = sum(filtered);
     const revenueGrooming = sum(filtered.filter((r) => r.service === "grooming"));
     const revenueDaycare  = sum(filtered.filter((r) => r.service === "daycare"));
     const revenuePaid     = sum(filtered.filter((r) => r.paymentStatus === "paid"));
-    const revenueUnpaid   = sum(filtered.filter((r) => r.paymentStatus !== "paid"));
+    const revenueUnpaid   = sum(filtered.filter((r) => r.paymentStatus !== "paid")); ----*/}
 
     let y = doc.lastAutoTable.finalY + 20;
     doc.setFontSize(12);
@@ -257,7 +257,7 @@ function closeConfirm() {
     );
     y += 18;
 
-    // Revenue block
+    {/*------- Revenue block
     doc.setFontSize(12);
     doc.text("Revenue", 40, y);
     doc.setFontSize(10);
@@ -267,9 +267,9 @@ function closeConfirm() {
     doc.text(`Pending (unpaid): Rs. ${revenueUnpaid.toFixed(2)}`, 40, y); y += 14;
     doc.text(`By service → Grooming: Rs. ${revenueGrooming.toFixed(2)}   |   Daycare: Rs. ${revenueDaycare.toFixed(2)}`, 40, y);
 
-    doc.save("caretaker-appointments.pdf");
+    doc.save("caretaker-appointments.pdf"); ------------*/}
   }
-  // -----------------------------------------------/
+  
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -399,7 +399,7 @@ function closeConfirm() {
           </tbody>
         </table>
 
-        {/* Download Summary button (right aligned) */}
+        {/* Download Summary button  */}
         <div className="mt-4 flex justify-end">
           <button
             onClick={exportCaretakerPDF}

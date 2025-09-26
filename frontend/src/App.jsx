@@ -1,6 +1,7 @@
 import React from 'react'
 import "./index.css";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
+import Adoption from './pages/Adoption'
 import AllCareService from "./pages/AllCareService.jsx";
 import GroomingDetails from './pages/GroomingDetails.jsx';
 import VetCareDetails from './pages/VetCareDetails.jsx';
@@ -18,13 +19,34 @@ import PaymentSuccess from './pages/PaymentSuccess.jsx';
 import EditVetForm from './components/EditVetForm.jsx';
 import EditGroomForm from './components/EditGroomForm.jsx';
 import EditDaycareForm from './components/EditDaycareForm.jsx';
+import PetList from './pages/PetList'
+import Navbar from "./components/Navbar"
+import Footer from "./components/Footer"
+import Home from './pages/Home'
+import MyAdoptions from './pages/MyAdoptions'
+import Layout from './pages/admin/Layout'
+import AdminDashboard from './pages/admin/AdminDashboard'
+import CaretakerDashboard from './pages/admin/CaretakerDashboard'
+import ManageAdoption from './pages/admin/ManageAdoption'
+import AddPet from './pages/caretaker/AddPet'
+import ManagePet from './pages/admin/ManagePet'
+import ManageInventory from './pages/admin/ManageInventory'
+import Layout_Caretaker from './pages/caretaker/Layout_Caretaker'
+import Login from './pages/Login'
+import MyProfile from './pages/MyProfile'
+import MyCareAppointments from './pages/MyCareAppointments'
 
 
 const App = () => {
+  const isAdminPath = useLocation().pathname.startsWith('/admin') || useLocation().pathname.startsWith('/caretaker')
+
   return (
+    <div>
+        {!isAdminPath && <Navbar />}
     <Routes>
+      <Route path="/" element={<Home />} />
       {/* All Care Services Page */}
-      <Route path='/' element={<AllCareService />} />
+      <Route path='/careservice' element={<AllCareService />} />
         {/*  Care Area  */}
       <Route path='/carearea' element={<CareArea />} />
 
@@ -67,9 +89,34 @@ const App = () => {
       {/* Payment Success Page */}
       <Route path="/payment-success" element={<PaymentSuccess />} />
 
+      
+              <Route path="/Adoption" element={<Adoption />} />
+              <Route path="/PetList" element={<PetList />} />
+              <Route path="/MyAdoptions" element={<MyAdoptions />} />
+              <Route path="/MyProfile" element={<MyProfile />} />
+              <Route path="/MyCareAppointments" element={<MyCareAppointments />} />
+              <Route path="/Login" element={<Login />} />
+              <Route path="/adoption/:id" element={<Adoption />} />
+
+              <Route path="/admin" element={<Layout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="/admin/manage-adoption" element={<ManageAdoption />} />
+                <Route path="/admin/manage-pet" element={<ManagePet />} />
+                <Route path="/admin/manage-inventory" element={<ManageInventory />} />
+              </Route>
+
+              <Route path="/caretaker" element={<Layout_Caretaker />}>
+                <Route index element={<CaretakerDashboard />} />
+                <Route path="/caretaker/add-pet" element={<AddPet />} />
+              </Route>
+              
+
        {/* Fallback for unknown routes */}
       <Route path="*" element={<h2 className="text-red-500 text-3xl">404 Page Not Found</h2>} />
+      
     </Routes>
+    {!isAdminPath && <Footer />}
+      </div>
   )
 }
 
