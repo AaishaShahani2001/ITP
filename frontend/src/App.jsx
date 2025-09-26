@@ -16,6 +16,8 @@ import Cart from './pages/Cart.jsx';
 import Checkout from './pages/Checkout.jsx';
 import PaymentSuccess from './pages/PaymentSuccess.jsx';
 import EditVetForm from './components/EditVetForm.jsx';
+import EditGroomForm from './components/EditGroomForm.jsx';
+import EditDaycareForm from './components/EditDaycareForm.jsx';
 
 
 const App = () => {
@@ -30,6 +32,8 @@ const App = () => {
       <Route path="/book/grooming" element={<GroomingDetails />} />
       {/* Grooming appointment Form */}
       <Route path="/grooming-booking" element={<GroomingBookingForm />} />
+      {/* Vet Edit Form */}
+      <Route path="/grooming-edit" element={<EditGroomForm />} />
 
       {/* Vet Care details Page */}
       <Route path="/book/vetappointment" element={<VetCareDetails />} />
@@ -42,6 +46,8 @@ const App = () => {
       <Route path="/book/daycare" element={<PetDaycareDetails />} />
        {/* Pet dat Care service  Form */}
       <Route path='/daycarebooking' element={<DaycareBookingForm />} />
+      {/* Vet Edit Form */}
+      <Route path="/daycare-edit" element={<EditDaycareForm />} />
       
       {/* My Appointment Page-Care services*/}
       <Route path='/myCareappointments' element={<MyAppointmentPage />} />

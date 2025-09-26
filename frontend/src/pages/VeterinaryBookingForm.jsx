@@ -167,7 +167,7 @@ export default function VeterinaryBookingForm() {
       fd.append("petSize", values.petSize);
       fd.append("reason", (lockedReason || values.reason || "").trim());
 
-      // ✅ TZ-safe: format local date to "YYYY-MM-DD" without toISOString()
+      //format local date to "YYYY-MM-DD" without toISOString()
       const localNoon = normalizeToLocalNoon(values.date);
       fd.append("dateISO", toLocalYMD(localNoon));
 

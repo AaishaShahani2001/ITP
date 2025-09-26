@@ -3,9 +3,24 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import mongoose from "mongoose";
 import VetAppointment from "../models/VetAppointmentModel.js";
 
 const router = express.Router();
+
+function getId(req) {
+  return (req.params && req.params.id) || (req.query && req.query.id) || "";
+}
+
+/* ------------------------------- ID validator ------------------------------- */
+const { isValidObjectId } = mongoose;
+function assertObjectId(id) {
+  if (!isValidObjectId(id)) {
+    const err = new Error("Invalid appointment id");
+    err.status = 400;
+    throw err;
+  }
+}
 
 /* -------------------------------- Upload dir -------------------------------- */
 const MED_DIR = path.join(process.cwd(), "uploads", "medical");
@@ -35,6 +50,14 @@ const upload = multer({
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 },
 });
+
+/* ---------------------- Accept JSON or multipart for PUT --------------------- */
+const maybeUpload = (req, res, next) => {
+  if (req.is("multipart/form-data")) {
+    return upload.single("medicalFile")(req, res, next);
+  }
+  next();
+};
 
 /* --------------------------------- Helpers --------------------------------- */
 function toHHMM(m = 0) {
@@ -68,13 +91,13 @@ router.get("/appointments", async (req, res, next) => {
       .lean();
 
     // Hide rejected/cancelled
-    const filtered = rows.filter((r) =>
-      !["rejected", "cancelled"].includes(String(r.status || r.state || "").toLowerCase())
+    const filtered = rows.filter(
+      (r) => !["rejected", "cancelled"].includes(String(r.status || r.state || "").toLowerCase())
     );
 
     const items = filtered.map((a) => ({
       id: String(a._id),
-      date: a.dateISO, // ✅ fixed (was 'String' by mistake)
+      date: a.dateISO,
       start: toHHMM(a.timeSlotMinutes),
       end: toHHMM((a.timeSlotMinutes || 0) + (a.durationMin || 30)),
       title: `${a.petType || "Pet"} • ${a.packageName || a.packageId || a.selectedService || "Vet"}`,
@@ -120,7 +143,6 @@ router.post("/appointments", upload.single("medicalFile"), async (req, res, next
       throw err;
     }
 
-    // ✅ Keep dateISO as literal "YYYY-MM-DD" (no UTC conversion)
     assertDateISO(dateISO);
     const slot = Number(timeSlotMinutes);
     if (!Number.isFinite(slot)) {
@@ -130,10 +152,7 @@ router.post("/appointments", upload.single("medicalFile"), async (req, res, next
     }
 
     // Conflict check
-    const exists = await VetAppointment.findOne({
-      dateISO,
-      timeSlotMinutes: slot,
-    }).lean();
+    const exists = await VetAppointment.findOne({ dateISO, timeSlotMinutes: slot }).lean();
     if (exists) {
       const err = new Error("That time slot is already booked.");
       err.status = 409;
@@ -142,6 +161,17 @@ router.post("/appointments", upload.single("medicalFile"), async (req, res, next
 
     const medicalFilePath = req.file ? `/uploads/medical/${req.file.filename}` : undefined;
 
+    // Coerce price if present
+    let priceNum = undefined;
+    if (typeof selectedPrice !== "undefined" && selectedPrice !== "") {
+      priceNum = Number(String(selectedPrice).replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(priceNum)) {
+        const err = new Error("Invalid selectedPrice");
+        err.status = 400;
+        throw err;
+      }
+    }
+
     const doc = await VetAppointment.create({
       ownerName: ownerName.trim(),
       ownerPhone: ownerPhone.trim(),
@@ -149,13 +179,13 @@ router.post("/appointments", upload.single("medicalFile"), async (req, res, next
       petType,
       petSize,
       reason: reason.trim(),
-      dateISO, // keep literal string
+      dateISO,
       timeSlotMinutes: slot,
       selectedService,
-      selectedPrice,
+      selectedPrice: priceNum,
       notes,
       medicalFilePath,
-      // status default comes from schema: "pending"
+      // status default from schema
     });
 
     res.status(201).json({ ok: true, id: doc._id, message: "Appointment created" });
@@ -169,7 +199,6 @@ router.post("/appointments", upload.single("medicalFile"), async (req, res, next
 });
 
 /* ---------------------------- GET /api/vet/ (all) ---------------------------- */
-// Return ALL vet appointments (dashboard uses client-side filters)
 router.get("/", async (req, res) => {
   try {
     const appts = await VetAppointment.find({})
@@ -183,21 +212,21 @@ router.get("/", async (req, res) => {
 });
 
 /* ----------------------- GET /api/vet/:id (single doc) ----------------------- */
-router.get("/:id", async (req, res) => {
+router.get("/:id", async (req, res, next) => {
   try {
-    const appt = await VetAppointment.findById(req.params.id).lean();
+    const id = getId(req);
+    assertObjectId(id);
+    const appt = await VetAppointment.findById(id).lean();
     if (!appt) return res.status(404).json({ error: "Appointment not found" });
-    res.status(200).json(appt);
-  } catch (error) {
-    console.error("❌ Fetch appointment by ID error:", error.message);
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
+    res.status(200).json({ ok: true, data: appt });
+  } catch (err) { next(err); }
 });
 
 /* -------- PUT /api/vet/:id (multipart-friendly update with conflict check) -------- */
-router.put("/:id", upload.single("medicalFile"), async (req, res, next) => {
+router.put("/:id", maybeUpload, async (req, res, next) => {
   try {
-    const id = req.params.id;
+    const id = getId(req);
+    assertObjectId(id);
     const existing = await VetAppointment.findById(id);
     if (!existing) return res.status(404).json({ error: "Appointment not found" });
 
@@ -207,42 +236,70 @@ router.put("/:id", upload.single("medicalFile"), async (req, res, next) => {
       ownerEmail,
       petType,
       petSize,
-      reason,
+      reason, // locked
       dateISO,
       timeSlotMinutes,
       notes,
       selectedService,
       selectedPrice,
-      status, // optional
+      status,
     } = req.body;
 
+    /* ------------------ ENFORCE REASON LOCK (server-side) ------------------ */
+    if (typeof reason === "string" && reason.trim() !== (existing.reason || "").trim()) {
+      const err = new Error("Reason cannot be changed after booking. Please create a new booking.");
+      err.status = 400;
+      throw err;
+    }
+
+    /* -------------------------- Build safe update -------------------------- */
     const update = {};
     if (typeof ownerName === "string") update.ownerName = ownerName.trim();
     if (typeof ownerPhone === "string") update.ownerPhone = ownerPhone.trim();
     if (typeof ownerEmail === "string") update.ownerEmail = ownerEmail.trim();
     if (typeof petType === "string") update.petType = petType;
     if (typeof petSize === "string") update.petSize = petSize;
-    if (typeof reason === "string") update.reason = reason.trim();
+    // reason is locked – do NOT set it
 
-    if (typeof dateISO === "string") {
+    if (typeof dateISO === "string" && dateISO !== "") {
       assertDateISO(dateISO);
-      update.dateISO = dateISO; // keep literal string
+      update.dateISO = dateISO; // keep literal YYYY-MM-DD
     }
+
     if (typeof timeSlotMinutes !== "undefined" && timeSlotMinutes !== "") {
-      const slot = Number(timeSlotMinutes);
-      if (!Number.isFinite(slot)) {
+      const slotNum = Number(timeSlotMinutes);
+      if (!Number.isFinite(slotNum)) {
         const err = new Error("Invalid timeSlotMinutes");
         err.status = 400;
         throw err;
       }
-      update.timeSlotMinutes = slot;
+      update.timeSlotMinutes = slotNum;
     }
 
     if (typeof notes === "string") update.notes = notes;
+
     if (typeof selectedService === "string") update.selectedService = selectedService;
-    if (typeof selectedPrice === "string" || typeof selectedPrice === "number")
-      update.selectedPrice = selectedPrice;
-    if (typeof status === "string") update.status = status;
+
+    if (typeof selectedPrice !== "undefined" && selectedPrice !== "") {
+      const priceNum = Number(String(selectedPrice).replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(priceNum)) {
+        const err = new Error("Invalid selectedPrice");
+        err.status = 400;
+        throw err;
+      }
+      update.selectedPrice = priceNum;
+    }
+
+    if (typeof status === "string") {
+      const allowed = ["accepted", "rejected", "cancelled", "pending"];
+      if (!allowed.includes(status)) {
+        const err = new Error("Invalid status");
+        err.status = 400;
+        throw err;
+      }
+      update.status = status;
+    }
+
 
     // Conflict check if date/slot changed
     const wantDate = update.dateISO ?? existing.dateISO;
@@ -251,7 +308,7 @@ router.put("/:id", upload.single("medicalFile"), async (req, res, next) => {
 
     if (wantDate && typeof wantSlot === "number") {
       const conflict = await VetAppointment.findOne({
-        _id: { $ne: id },
+        _id: { $ne: existing._id }, // use real ObjectId
         dateISO: wantDate,
         timeSlotMinutes: wantSlot,
       }).lean();
@@ -294,20 +351,21 @@ router.put("/:id", upload.single("medicalFile"), async (req, res, next) => {
 });
 
 /* --------------------- DELETE /api/vet/:id (hard delete) --------------------- */
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", async (req, res, next) => {
   try {
+    assertObjectId(req.params.id);
     const deleted = await VetAppointment.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Appointment not found" });
     res.status(200).json({ ok: true, message: "Appointment deleted successfully" });
   } catch (error) {
-    console.error("❌ Delete appointment error:", error.message);
-    res.status(500).json({ message: "Server error", error: error.message });
+    next(error);
   }
 });
 
 /* ------------- PATCH /api/vet/:id/status  {status: accepted|...} ------------- */
 router.patch("/:id/status", async (req, res, next) => {
   try {
+    assertObjectId(req.params.id);
     const { status } = req.body;
     if (!["accepted", "rejected", "cancelled", "pending"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });

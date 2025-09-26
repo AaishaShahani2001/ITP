@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../store/cartStore";
-import { useSnackbar } from "notistack"; 
+import { useSnackbar } from "notistack";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 const API_BASE = "http://localhost:3000/api";
@@ -13,9 +13,9 @@ const SERVICE_LABEL = {
 };
 
 const EDIT_PATH = {
-  vet: "/vet-edit",     //vet-edit form
-  grooming: "/grooming-booking",
-  daycare: "/daycarebooking",
+  vet: "/vet-edit", // vet-edit form
+  grooming: "/grooming-edit", //grooming-edit form
+  daycare: "/daycare-edit", //daycare-edit form
 };
 
 function broadcastAppointmentsChanged(detail = {}) {
@@ -67,16 +67,14 @@ function getPrice(a) {
 }
 
 /* ---------- NEW: date formatter used in the list ---------- */
-function fmtDate(ymd) { // NEW
-  // Accepts "YYYY-MM-DD" (date or dateISO). Falls back gracefully.
+function fmtDate(ymd) {
   if (!ymd) return "-";
   try {
     const [Y, M, D] = String(ymd).split("-").map((n) => parseInt(n || "0", 10));
     const d = new Date(Y, (M || 1) - 1, D || 1);
-    // e.g., "Sep 25, 2025" (uses user locale)
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
   } catch {
-    return ymd; // if it's already a readable string, just show it
+    return ymd;
   }
 }
 
@@ -84,6 +82,7 @@ export default function MyAppointmentPage() {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const [params] = useSearchParams();
+
   const [email, setEmail] = useState(() => params.get("email") || "");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -99,6 +98,12 @@ export default function MyAppointmentPage() {
   const [showAddMore, setShowAddMore] = useState(false); // add-more modal
 
   const pendingTimersRef = useRef(new Map()); // id -> { timer, prevItems, snackbarKey }
+
+  // Keep latest email for event handler (avoid stale closures)
+  const emailRef = useRef(email);
+  useEffect(() => {
+    emailRef.current = email;
+  }, [email]);
 
   // normalize id in one place
   const getApptId = (a) => a?._id || a?.id;
@@ -134,14 +139,15 @@ export default function MyAppointmentPage() {
     return Array.isArray(data.items) ? data.items : [];
   }
 
-  async function loadMine() {
-    if (!email) {
+  async function loadMine(forceEmail) {
+    const e = forceEmail ?? emailRef.current;
+    if (!e) {
       alert("Please enter your email first.");
       return;
     }
     try {
       setLoading(true);
-      const list = await fetchMyAppointments(email);
+      const list = await fetchMyAppointments(e);
       setItems(list);
     } catch (err) {
       console.error(err);
@@ -154,11 +160,20 @@ export default function MyAppointmentPage() {
 
   // auto-load if ?email= is present
   useEffect(() => {
-    if (email) loadMine();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (email) loadMine(email);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 🔔 Listen for updates from other pages (e.g., EditVetForm)
+  useEffect(() => {
+    const handler = () => {
+      if (emailRef.current) loadMine(emailRef.current);
+    };
+    window.addEventListener("appointments:changed", handler);
+    return () => window.removeEventListener("appointments:changed", handler);
+  }, []);
 
   // --- Actions (EDIT & DELETE) ---
-
   async function confirmDelete() {
     if (!pendingAppt) return;
     const id = getApptId(pendingAppt);
@@ -212,7 +227,6 @@ export default function MyAppointmentPage() {
     }
 
     // For vet: pass both a query param (editId) AND the doc via location.state
-    // so the edit page can render instantly without re-fetch, but still has id.
     if (appt.service === "vet") {
       navigate(`${EDIT_PATH.vet}?editId=${apptId}`, { state: { appointment: appt } });
       return;
@@ -230,7 +244,6 @@ export default function MyAppointmentPage() {
 
   function proceedToCheckoutFromSummary() {
     if (!selected) return;
-    // use getPrice(selected) so it matches the list
     addItem({
       id: selected._id || selected.id,
       service: selected.service,
@@ -247,7 +260,7 @@ export default function MyAppointmentPage() {
       .map((a) => ({
         id: a._id || a.id,
         title: a.title,
-        price: getPrice(a), // use resolver
+        price: getPrice(a),
         extras: a.extras || [],
       }));
     addMany(extra);
@@ -278,7 +291,7 @@ export default function MyAppointmentPage() {
           className="w-full md:w-80 rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
         <button
-          onClick={loadMine}
+          onClick={() => loadMine()}
           disabled={loading}
           className="inline-flex items-center rounded-lg bg-emerald-600 text-white px-4 py-2 font-semibold hover:bg-emerald-700 disabled:opacity-60"
         >
@@ -305,12 +318,12 @@ export default function MyAppointmentPage() {
                 </div>
                 <div className="text-slate-900 font-semibold">{a.title}</div>
 
-                {/* NEW: show Date • Start–End */}
+                {/* Date • Start–End */}
                 <div className="text-sm text-slate-600">
                   {fmtDate(a.date || a.dateISO)} • {a.start}–{a.end}
                 </div>
 
-                {/* Price line (uses resolver) */}
+                {/* Price line */}
                 <div className="mt-1 font-semibold">
                   Price: Rs. {getPrice(a).toFixed(2)}
                 </div>
@@ -374,29 +387,19 @@ export default function MyAppointmentPage() {
               ))}
             </ul>
 
-            {/* total uses resolver too */}
             <div className="mt-3 font-bold">
               Total: Rs.&nbsp;
               {(
                 getPrice(selected) +
-                (selected.extras || []).reduce(
-                  (a, e) => a + Number(e.price || 0),
-                  0
-                )
+                (selected.extras || []).reduce((a, e) => a + Number(e.price || 0), 0)
               ).toFixed(2)}
             </div>
 
             <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => setSelected(null)}
-                className="px-3 py-2 rounded-lg border"
-              >
+              <button onClick={() => setSelected(null)} className="px-3 py-2 rounded-lg border">
                 Cancel
               </button>
-              <button
-                onClick={proceedToCheckoutFromSummary}
-                className="px-3 py-2 rounded-lg bg-emerald-600 text-white"
-              >
+              <button onClick={proceedToCheckoutFromSummary} className="px-3 py-2 rounded-lg bg-emerald-600 text-white">
                 Proceed to checkout
               </button>
             </div>
@@ -446,9 +449,7 @@ function Badge({ label, tone = "slate" }) {
   };
 
   return (
-    <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-md ring-1 text-[12px] ${tones[tone]}`}
-    >
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-md ring-1 text-[12px] ${tones[tone]}`}>
       {label}
     </span>
   );
@@ -469,46 +470,33 @@ function statusTone(s) {
 
 function AddMoreModal({ appts, onSkip, onConfirm, onClose }) {
   const [picked, setPicked] = useState([]);
-  const toggle = (id) =>
-    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div className="bg-white w-full max-w-[520px] rounded-2xl p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">Add anything else?</h3>
-          <button onClick={onClose} className="text-slate-500">
-            ✕
-          </button>
+          <button onClick={onClose} className="text-slate-500">✕</button>
         </div>
 
         <div className="mt-3 max-h-64 overflow-auto divide-y">
-          {appts.length === 0 && (
-            <div className="text-gray-500 py-4">No other pending appointments.</div>
-          )}
+          {appts.length === 0 && <div className="text-gray-500 py-4">No other pending appointments.</div>}
           {appts.map((a) => (
             <label key={a.id} className="flex items-center gap-3 py-2">
-              <input
-                type="checkbox"
-                checked={picked.includes(a.id)}
-                onChange={() => toggle(a.id)}
-              />
+              <input type="checkbox" checked={picked.includes(a.id)} onChange={() => toggle(a.id)} />
               <div>
                 <div className="font-medium">
                   {SERVICE_LABEL[a.service] || a.service} — {a.title}
                 </div>
-                <div className="text-sm text-slate-600">
-                  Rs. {getPrice(a).toFixed(2)}
-                </div>
+                <div className="text-sm text-slate-600">Rs. {getPrice(a).toFixed(2)}</div>
               </div>
             </label>
           ))}
         </div>
 
         <div className="mt-4 flex gap-2 justify-end">
-          <button onClick={onSkip} className="px-3 py-2 rounded-lg border">
-            Skip
-          </button>
+          <button onClick={onSkip} className="px-3 py-2 rounded-lg border">Skip</button>
           <button
             onClick={() => onConfirm(picked)}
             className="px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50"
