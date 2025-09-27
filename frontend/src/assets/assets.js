@@ -113,6 +113,10 @@ export const caretakerMenuLinks = [
     { name: "Add Pet", path: "/caretaker/add-pet", icon: add, coloredIcon: add_colored },
 ]
 
+export const doctorMenuLinks = [
+    { name: "Dashboard", path: "/doctor-dashboard", icon: dashboard, coloredIcon: dashboard_colored},
+]
+
 export const dummyPetData = [
     {
         "_id": "pet1",
@@ -429,7 +433,16 @@ export const dummyUserData = [
         "email": "caretaker@example.com",
         "role": "Caretaker",
         "image": user_profile,
+    },
+    {
+        
+        "_id": "8wefkhui",
+        "name": "Sarah",
+        "email": "doctor@example.com",
+        "role": "Doctor",
+        "image": user_profile,
     }
+
 ]
 
 export const dummyDashboardData = [

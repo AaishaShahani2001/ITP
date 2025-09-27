@@ -21,19 +21,19 @@ export default function AllCareService() {
     <section
       role="banner"
       aria-label="Professional Pet Services"
-      className="relative isolate bg-gradient-to-r from-green-400 to-green-600 text-white
+      className="relative isolate bg-gray-200 text-black
                  min-h-[60vh] flex items-center justify-center text-center
-                 px-4 py-20 md:py-28 rounded-b-2xl"
+                 px-2 py-10 md:py-14 rounded-b-2xl"
     >
       <div className="pointer-events-none absolute inset-0 opacity-20
                       bg-[radial-gradient(60%_60%_at_50%_40%,white,transparent)]" />
 
       <div className="relative z-10 max-w-screen-lg mx-auto">
-        <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight mb-3">
+        <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight mb-3">
           Professional Pet Services
         </h1>
 
-        <p className="text-base md:text-xl/7 opacity-95 max-w-3xl mx-auto mb-7">
+        <p className="text-base md:text-xl/7 opacity-95 max-w-3xl mx-auto mb-7 text-gray-500">
           Comprehensive care for your beloved pets with experienced professionals
           and state-of-the-art facilities.
         </p>

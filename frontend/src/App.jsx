@@ -11,8 +11,7 @@ import DaycareBookingForm from './pages/DayCareBookingForm.jsx';
 import VeterinaryBookingForm from './pages/VeterinaryBookingForm.jsx';
 import GroomingBookingForm from './pages/GroomingBookingForm.jsx';
 import MyAppointmentPage from './pages/MyAppointmentPage.jsx';
-import CaretackerDashboard from './pages/CaretackerDashboard.jsx';
-import DoctorDashboard from './pages/DoctorDashboard.jsx';
+import DoctorDashboard from './pages/doctor/DoctorDashboard.jsx';
 import Cart from './pages/Cart.jsx';
 import Checkout from './pages/Checkout.jsx';
 import PaymentSuccess from './pages/PaymentSuccess.jsx';
@@ -26,12 +25,13 @@ import Home from './pages/Home'
 import MyAdoptions from './pages/MyAdoptions'
 import Layout from './pages/admin/Layout'
 import AdminDashboard from './pages/admin/AdminDashboard'
-import CaretakerDashboard from './pages/admin/CaretakerDashboard'
+import CaretackerDashboard from './pages/caretaker/CaretackerDashboard'
 import ManageAdoption from './pages/admin/ManageAdoption'
 import AddPet from './pages/caretaker/AddPet'
 import ManagePet from './pages/admin/ManagePet'
 import ManageInventory from './pages/admin/ManageInventory'
 import Layout_Caretaker from './pages/caretaker/Layout_Caretaker'
+import Layout_Doctor from './pages/doctor/Layout_Doctor.jsx';
 import Login from './pages/Login'
 import MyProfile from './pages/MyProfile'
 import MyCareAppointments from './pages/MyCareAppointments'
@@ -74,11 +74,6 @@ const App = () => {
       {/* My Appointment Page-Care services*/}
       <Route path='/myCareappointments' element={<MyAppointmentPage />} />
      
-      {/* Caretacker Dashboard */}
-      <Route path='/caretacker-dashboard' element={<CaretackerDashboard/>} />
-
-      {/* Caretacker Dashboard */}
-      <Route path='/doctor-dashboard' element={<DoctorDashboard/>} />
 
       {/* Cart Page */}
       <Route path='/cart' element={<Cart/>} />
@@ -106,8 +101,12 @@ const App = () => {
               </Route>
 
               <Route path="/caretaker" element={<Layout_Caretaker />}>
-                <Route index element={<CaretakerDashboard />} />
+                <Route index element={<CaretackerDashboard />} />
                 <Route path="/caretaker/add-pet" element={<AddPet />} />
+              </Route>
+
+              <Route path="/doctor-dashboard" element={<Layout_Doctor />}>
+                <Route index element={<DoctorDashboard />} />
               </Route>
               
 
