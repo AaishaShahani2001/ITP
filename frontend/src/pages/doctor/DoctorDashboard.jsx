@@ -1,9 +1,8 @@
-// src/pages/DoctorDashboard.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useSnackbar } from "notistack";
-import ConfirmBox from "../components/ConfirmBox";
+import ConfirmBox from "../../components/ConfirmBox";
 
 const API_BASE = "http://localhost:3000";
 
@@ -131,7 +130,7 @@ export default function DoctorDashboard() {
     return true;
   });
 
-  // 🔽 sort by booking order (newest first)
+  // sort by booking order (newest first)
   return base.slice().sort((a, b) => getBookedAtMs(b) - getBookedAtMs(a));
 }, [items, view, petType, todayYMD, query]);
 

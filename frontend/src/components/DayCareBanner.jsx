@@ -1,4 +1,3 @@
-// DayCareBanner.jsx
 import React from "react";
 import { Link } from "react-router-dom";
 import { LuHouse, LuCircleCheck, LuArrowLeft } from "react-icons/lu";
@@ -9,7 +8,7 @@ export default function DayCareBanner() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Back link */}
         <Link
-          to="/"
+          to="/careservice"
           className="inline-flex items-center gap-2 text-sm font-medium mb-6 hover:underline"
         >
           <LuArrowLeft size={18} /> Back to Services

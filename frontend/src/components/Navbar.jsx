@@ -51,6 +51,12 @@ const Navbar = () => {
           <li className='py-1'>Caretaker Dashboard</li>
           <hr className='h-0.5 border-y-primary w-4/5 m-auto hidden' />
         </NavLink>
+
+        <NavLink to="/doctor-dashboard">
+          <li className='py-1'>Doctor Dashboard</li>
+          <hr className='h-0.5 border-y-primary w-4/5 m-auto hidden' />
+        </NavLink>
+
       </ul>
 
       <div className='flex items-center gap-4 mr-3'>
